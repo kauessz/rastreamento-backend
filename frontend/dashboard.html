@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Rastreamento de Carga</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <header>
+        <div class="logo">Dashboard Admin</div>
+        <div class="header-right">
+            <div class="user-profile">
+                <span class="user-profile-icon">👤</span>
+                <span id="userEmail"></span>
+            </div>
+            <div class="theme-switch-wrapper">
+                <label class="theme-switch" for="checkbox">
+                    <input type="checkbox" id="checkbox" />
+                    <div class="slider round"></div>
+                </label>
+            </div>
+            <button id="logoutButton" class="button-logout">Sair</button>
+        </div>
+    </header>
+
+    <main class="dashboard-container">
+
+        <section class="dashboard-section">
+            <div class="management-container">
+                <div class="management-box">
+                    <h3>Upload de Planilha</h3>
+                    <form id="uploadForm" class="filters">
+                        <input type="file" id="fileInput" required>
+                        <button type="submit">Enviar</button>
+                    </form>
+                    <p id="uploadMessage"></p>
+                    <hr style="margin: 20px 0;"> <button id="clearOperationsButton" class="button-danger">Limpar Todas as Operações</button>
+                </div>
+                <div class="management-box">
+                    <h3>Usuários Pendentes</h3>
+                    <div id="pendingUsersList"></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="dashboard-section">
+            <h2>Filtros de Operações</h2>
+            <div class="filters" id="globalFilters">
+                <select id="embarcadorFilter"><option value="">Todos Embarcadores</option></select>
+                <input type="text" id="bookingFilter" placeholder="Filtrar por Booking...">
+                <input type="date" id="dataPrevisaoFilter" title="Filtrar por data de previsão">
+                <button id="filterButton">Filtrar</button>
+                <button id="clearFilterButton" class="button-secondary">Limpar Filtros</button>
+            </div>
+        </section>
+        
+        <section class="dashboard-section">
+            <h2>Visão Geral das Operações</h2>
+            <div class="kpi-container">
+                <div class="kpi-card" id="kpi-total" data-filter="total">
+                    <span class="kpi-value">0</span>
+                    <span class="kpi-label">Total de Operações</span>
+                </div>
+                <div class="kpi-card" id="kpi-ontime" data-filter="on_time">
+                    <span class="kpi-value">0</span>
+                    <span class="kpi-label">On Time</span>
+                </div>
+                <div class="kpi-card" id="kpi-atrasadas" data-filter="atrasadas">
+                    <span class="kpi-value">0</span>
+                    <span class="kpi-label">Atrasadas</span>
+                </div>
+                <div class="kpi-card" id="kpi-percentual">
+                    <span class="kpi-value">0%</span>
+                    <span class="kpi-label">% de Atraso</span>
+                </div>
+            </div>
+            <div class="charts-wrapper">
+                <div class="chart-container">
+                    <h3>Top 10 Ofensores de Atraso</h3>
+                    <canvas id="ofensoresChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>Top 10 Clientes com Atraso</h3>
+                    <canvas id="clientesChart"></canvas>
+                </div>
+            </div>
+        </section>
+        
+        <section class="dashboard-section">
+            <h2>Lista de Operações</h2>
+            <div class="table-wrapper">
+                <table id="operationsTable" class="operations-table">
+                    <thead>
+                        <tr>
+                            <th data-sort="booking">Booking</th>
+                            <th data-sort="containers">Contêiner</th>
+                            <th data-sort="nome_embarcador">Embarcador</th>
+                            <th data-sort="porto">Porto</th>
+                            <th data-sort="previsao_inicio_atendimento">Previsão Atendimento</th>
+                            <th>Início da Execução</th>
+                            <th>Fim da Execução</th>
+                            <th>Atraso (HH:MM)</th>
+                            <th>Motivo do Atraso</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="paginationControls"></div>
+        </section>
+    </main>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="js/firebase-init.js"></script>
+    <script src="js/dashboard.js"></script>
+</body>
+</html>

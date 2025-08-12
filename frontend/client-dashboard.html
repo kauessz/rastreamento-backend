@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Minhas Operações - Rastreamento</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <div class="logo">Portal do Cliente</div>
+        <div class="header-right">
+            <div class="user-profile">
+                <span class="user-profile-icon">👤</span>
+                <span id="userEmail"></span>
+            </div>
+            <div class="theme-switch-wrapper">
+                <label class="theme-switch" for="checkbox">
+                    <input type="checkbox" id="checkbox" />
+                    <div class="slider round"></div>
+                </label>
+            </div>
+            <button id="logoutButton" class="button-logout">Sair</button>
+        </div>
+    </header>
+
+    <main class="dashboard-container">
+        <section class="dashboard-section">
+            <h2>Minha Visão Geral</h2>
+            <div class="kpi-container">
+                <div class="kpi-card" id="kpi-total"><span class="kpi-value">0</span><span class="kpi-label">Total de Operações</span></div>
+                <div class="kpi-card" id="kpi-ontime"><span class="kpi-value">0</span><span class="kpi-label">On Time</span></div>
+                <div class="kpi-card" id="kpi-atrasadas"><span class="kpi-value">0</span><span class="kpi-label">Atrasadas</span></div>
+                <div class="kpi-card" id="kpi-percentual"><span class="kpi-value">0%</span><span class="kpi-label">% de Atraso</span></div>
+            </div>
+        </section>
+
+        <section class="dashboard-section">
+            <h2>Minhas Operações</h2>
+            <div class="filters">
+                <input type="text" id="bookingFilter" placeholder="Filtrar por Booking...">
+                <input type="date" id="dataPrevisaoFilter">
+                <button id="filterButton">Filtrar</button>
+                <button id="clearFilterButton" class="button-secondary">Limpar</button>
+            </div>
+            <div class="table-wrapper">
+                <table id="clientOperationsTable" class="operations-table">
+                    <thead>
+                        <tr>
+                            <th>Booking</th>
+                            <th>Contêiner(es)</th>
+                            <th>Status</th>
+                            <th>Previsão Atendimento</th>
+                            <th>Início da Execução</th>
+                            <th>Fim da Execução</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="paginationControls"></div>
+        </section>
+    </main>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="js/firebase-init.js"></script>
+    <script src="js/client-dashboard.js"></script>
+</body>
+</html>

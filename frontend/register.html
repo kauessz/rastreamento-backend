@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registro - Rastreamento de Carga</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <div class="logo">Rastreio Cargas</div>
+        <div class="theme-switch-wrapper">
+            <label class="theme-switch" for="checkbox">
+                <input type="checkbox" id="checkbox" />
+                <div class="slider round"></div>
+            </label>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="auth-container">
+            <h1>Crie sua Conta</h1>
+            <p>Sua conta precisará ser aprovada por um administrador.</p>
+            <form id="registerForm" class="auth-form">
+                <input type="text" id="name" placeholder="Seu Nome Completo" required>
+                <input type="text" id="company" placeholder="Nome da sua Empresa" required>
+                <input type="email" id="email" placeholder="Seu E-mail" required>
+                <input type="password" id="password" placeholder="Crie uma Senha (mín. 6 caracteres)" required>
+                <button type="submit">Registrar</button>
+            </form>
+            <p id="message" class="message"></p>
+            <p class="auth-link">Já tem uma conta? <a href="login.html">Faça Login</a></p>
+            <p class="auth-link"><a href="index.html">Voltar para Rastreio Público</a></p>
+        </div>
+    </main>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="js/firebase-init.js"></script>
+    <script src="js/register.js"></script>
+</body>
+</html>

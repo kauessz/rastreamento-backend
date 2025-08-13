@@ -1,5 +1,7 @@
 // frontend/js/firebase-init.js
 
+const API_BASE_URL = 'https://rastreamento-backend-05pi.onrender.com';
+
 const firebaseConfig = {
     apiKey: "AIzaSyAhC_i0QzbwnO6FEJxPobPyhDf4u4PjeoQ",
     authDomain: "tracking-17303.firebaseapp.com",

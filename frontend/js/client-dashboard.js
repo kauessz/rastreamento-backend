@@ -45,7 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchClientKpis() {
         try {
-            const response = await fetch('http://localhost:3001/api/client/kpis', {
+            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/client/kpis', {
                 headers: { 'Authorization': `Bearer ${currentToken}` }
             });
             if (!response.ok) throw new Error('Falha ao buscar KPIs.');
@@ -61,7 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchClientOperations(page = 1, filters = {}) {
         tableBody.innerHTML = `<tr><td colspan="6">Carregando suas operações...</td></tr>`;
-        let url = new URL('http://localhost:3001/api/client/operations');
+        let url = new URL('https://rastreamento-backend-05pi.onrender.com/api/client/operations');
         url.searchParams.append('page', page);
         url.searchParams.append('limit', 20);
         if (filters.booking) url.searchParams.append('booking', filters.booking);

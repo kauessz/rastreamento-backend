@@ -20,7 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const idToken = await user.getIdToken();
 
             // 3. Pergunta para a nossa API: "Quem é este usuário?"
-            const response = await fetch('http://localhost:3001/api/users/me', {
+            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/users/me', {
                 headers: { 'Authorization': `Bearer ${idToken}` }
             });
             const profile = await response.json();

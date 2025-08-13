@@ -93,7 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.append('file', file);
         uploadMessage.textContent = 'Enviando arquivo...';
         try {
-            const response = await fetch('http://localhost:3001/api/operations/upload', {
+            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/operations/upload', {
                 method: 'POST', headers: { 'Authorization': `Bearer ${currentToken}` }, body: formData,
             });
             const result = await response.json();
@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- 4. LÓGICA DOS FILTROS GLOBAIS ---
     async function populateEmbarcadorFilter() {
         try {
-            const response = await fetch('http://localhost:3001/api/embarcadores', { headers: { 'Authorization': `Bearer ${currentToken}` } });
+            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/embarcadores', { headers: { 'Authorization': `Bearer ${currentToken}` } });
             if (!response.ok) throw new Error('Falha ao buscar embarcadores.');
             const embarcadores = await response.json();
             embarcadorFilter.innerHTML = '<option value="">Todos Embarcadores</option>';
@@ -152,7 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!currentToken) return;
 
         // Constrói a URL com os parâmetros de filtro
-        const url = new URL('http://localhost:3001/api/dashboard/kpis');
+        const url = new URL('https://rastreamento-backend-05pi.onrender.com/api/dashboard/kpis');
         Object.keys(filters).forEach(key => {
             if (filters[key]) {
                 url.searchParams.append(key, filters[key]);
@@ -217,7 +217,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchOperations(page = 1, filters = {}) {
         if (!currentToken) return;
         operationsTableBody.innerHTML = `<tr><td colspan="9">Carregando...</td></tr>`;
-        let url = new URL('http://localhost:3001/api/operations');
+        let url = new URL('https://rastreamento-backend-05pi.onrender.com/api/operations');
         url.searchParams.append('page', page);
         url.searchParams.append('limit', 20);
         url.searchParams.append('sortBy', currentSort.column);
@@ -323,7 +323,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchPendingUsers() {
         if (!currentToken) return;
         try {
-            const response = await fetch('http://localhost:3001/api/users/admin/pending', { headers: { 'Authorization': `Bearer ${currentToken}` } });
+            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/users/admin/pending', { headers: { 'Authorization': `Bearer ${currentToken}` } });
             if (!response.ok) throw new Error((await response.json()).message);
             const users = await response.json();
             renderPendingUsers(users);
@@ -356,7 +356,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function approveUser(userId) {
         if (!confirm('Tem certeza que deseja aprovar este usuário?')) return;
         try {
-            const response = await fetch(`http://localhost:3001/api/users/admin/approve/${userId}`, {
+            const response = await fetch(`https://rastreamento-backend-05pi.onrender.com/api/users/admin/approve/${userId}`, {
                 method: 'PUT', headers: { 'Authorization': `Bearer ${currentToken}` }
             });
             if (!response.ok) throw new Error((await response.json()).message);
@@ -380,7 +380,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (secondConfirm) {
                 try {
-                    const response = await fetch('http://localhost:3001/api/operations/all', {
+                    const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/operations/all', {
                         method: 'DELETE',
                         headers: { 'Authorization': `Bearer ${currentToken}` },
                     });

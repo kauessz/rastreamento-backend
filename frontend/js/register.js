@@ -20,7 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const firebaseUser = userCredential.user;
 
             // 2. Se deu certo, envia os dados para a nossa API Node.js
-            const response = await fetch('http://localhost:3001/api/users/register', {
+            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/users/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

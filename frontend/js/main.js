@@ -39,7 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const resultsContainer = document.getElementById('resultsContainer');
     
     // O endereço base da nossa API. Facilita se precisarmos mudar depois.
-    const API_URL = 'http://localhost:3001/api/operations/public/track/';
+    const API_URL = 'https://rastreamento-backend-05pi.onrender.com/api/operations/public/track/';
 
     // 2. ADICIONANDO UM "OUVINTE" DE EVENTO
     // Dizemos ao botão de busca para executar a função 'handleSearch' quando for clicado.

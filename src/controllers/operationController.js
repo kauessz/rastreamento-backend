@@ -69,7 +69,7 @@ exports.uploadOperations = async (req, res) => {
                 let shipperNameMapping = {};
                 if (rawShipperNames.length > 0) {
                     console.log("Consultando serviço de IA para os nomes:", rawShipperNames);
-                    const aiResponse = await axios.post('http://localhost:5000/standardize', {
+                    const aiResponse = await axios.post('https://rastreamento-ia.onrender.com/standardize', {
                         names: rawShipperNames
                     });
                     shipperNameMapping = aiResponse.data;

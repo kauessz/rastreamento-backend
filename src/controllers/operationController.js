@@ -65,6 +65,9 @@ async function getStandardizedShipperId(rawName) {
 // -----------------------------------------------------------------------------------------
 // FUNÇÃO 1: UPLOAD DA PLANILHA (usando a nova lógica interna)
 // -----------------------------------------------------------------------------------------
+// Em: src/controllers/operationController.js
+// Substitua a função uploadOperations inteira por esta:
+
 exports.uploadOperations = async (req, res) => {
     if (!req.file) { return res.status(400).json({ message: 'Nenhum arquivo enviado.' }); }
     const results = [];
@@ -81,18 +84,34 @@ exports.uploadOperations = async (req, res) => {
         console.warn(`Formato de data não reconhecido: "${dateString}"`);
         return null;
     };
+    
+    // Lista dos cabeçalhos na ordem EXATA em que aparecem na sua planilha CSV
+    const csvHeaders = [
+        'Aut. embarque', 'Tipo de programação', 'Situação prazo programação', 'Transportadora',
+        'Número da programação', 'Booking', 'Containers', 'Número cliente', 'Tipo container',
+        'Previsão início atendimento (BRA)', 'Dt Início da Execução (BRA)', 'Dt FIM da Execução (BRA)',
+        'Data de previsão de entrega recalculada (BRA)', 'Tempo no cliente', 'Cidade local de atendimento',
+        'Embarcador', 'Nome do motorista programado', 'Placa da carreta 1', 'Placa do veículo',
+        'CPF motorista programado', 'Justificativa de atraso de programação', 'Nome local de atendimento',
+        'Situação programação', 'POL', 'POD', 'Tipo de ocorrência'
+    ];
 
     fs.createReadStream(filePath, { encoding: 'utf8' })
-        .pipe(csv({ separator: ';', mapHeaders: ({ header }) => header.trim().replace(/^\uFEFF/, '') }))
+        // ===== MUDANÇA CRUCIAL AQUI =====
+        // headers: false diz para o parser ignorar a primeira linha do arquivo
+        // headers: csvHeaders diz para o parser usar a NOSSA lista de nomes para as colunas
+        .pipe(csv({ separator: ';', headers: csvHeaders, skipLines: 1 }))
         .on('data', (data) => results.push(data))
         .on('end', async () => {
             let processedCount = 0;
+            let skippedCount = 0;
             try {
                 await client.query('BEGIN');
                 for (const row of results) {
                     const embarcadorId = await getStandardizedShipperId(row['Embarcador']);
                     if (!embarcadorId) {
                         console.log(`Pulando linha por embarcador não encontrado/mapeado: ${row['Embarcador']}`);
+                        skippedCount++;
                         continue;
                     }
                     
@@ -115,7 +134,7 @@ exports.uploadOperations = async (req, res) => {
                     processedCount++;
                 }
                 await client.query('COMMIT');
-                res.status(200).json({ message: `${processedCount} de ${results.length} operações processadas com sucesso.` });
+                res.status(200).json({ message: `${processedCount} operações processadas. ${skippedCount} linhas puladas por embarcador não mapeado.` });
             } catch (error) {
                 await client.query('ROLLBACK');
                 console.error('Erro ao processar o arquivo CSV:', error);

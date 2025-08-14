@@ -1,6 +1,5 @@
 // =========================================================================================
-//                                     operationController.js (Versão Final Completa)
-// Este arquivo controla o upload, a busca pública e a busca principal de operações para o dashboard.
+//                                     operationController.js (Versão Final com Auto-Cadastro)
 // =========================================================================================
 
 const fs = require('fs');
@@ -16,7 +15,7 @@ async function getStandardizedShipperId(rawName) {
     if (!rawName || !rawName.trim()) return null;
 
     // Regras de mapeamento: se o nome "sujo" contém uma palavra-chave, ele corresponde ao mestre.
-    // Adicione ou modifique estas regras conforme a necessidade do seu negócio.
+    // Esta lista é sua "base de conhecimento" inicial.
     const mappingRules = {
         'AMBEV': ['AMBEV'],
         'BRASKEM': ['BRASKEM'],
@@ -29,12 +28,13 @@ async function getStandardizedShipperId(rawName) {
         'BALL': ['BALL'],
         'VIDEOLAR': ['VIDEOLAR'],
         'SAMSUNG': ['SAMSUNG'],
-        // Adicione outras regras aqui...
+        // Adicione outras regras de mapeamento aqui...
     };
 
-    const upperRawName = rawName.toUpperCase();
+    const upperRawName = rawName.toUpperCase().trim();
     let masterName = null;
 
+    // 1. Tenta encontrar uma correspondência nas regras predefinidas.
     for (const master in mappingRules) {
         for (const keyword of mappingRules[master]) {
             if (upperRawName.includes(keyword)) {
@@ -45,29 +45,37 @@ async function getStandardizedShipperId(rawName) {
         if (masterName) break;
     }
 
-    // Se uma regra foi encontrada, busca o ID do cliente mestre no banco de dados.
-    if (masterName) {
-        const result = await db.query('SELECT id FROM embarcadores WHERE nome_principal = $1', [masterName]);
-        if (result.rows.length > 0) {
-            const masterId = result.rows[0].id;
-            // Garante que o nome original "sujo" vire um "apelido" para futuras otimizações.
-            await db.query('INSERT INTO embarcador_aliases (nome_alias, embarcador_id) VALUES ($1, $2) ON CONFLICT (nome_alias) DO NOTHING', [rawName, masterId]);
-            return masterId;
-        }
+    // 2. Se nenhuma regra funcionou, usa o nome original "limpo" como um potencial novo mestre.
+    if (!masterName) {
+        masterName = rawName.trim();
+    }
+    
+    // 3. Busca no banco se este 'masterName' já existe.
+    let result = await db.query('SELECT id FROM embarcadores WHERE nome_principal = $1', [masterName]);
+    let masterId;
+
+    if (result.rows.length > 0) {
+        // Se já existe, pega o ID.
+        masterId = result.rows[0].id;
+    } else {
+        // 4. Se não existe, CRIA um novo embarcador mestre. O sistema aprende sozinho.
+        console.log(`Criando novo embarcador mestre: "${masterName}"`);
+        const newMaster = await db.query('INSERT INTO embarcadores (nome_principal) VALUES ($1) RETURNING id', [masterName]);
+        masterId = newMaster.rows[0].id;
     }
 
-    // Se nenhuma regra funcionou, o nome não é reconhecido.
-    console.warn(`Embarcador não mapeado: "${rawName}"`);
-    return null; // Retorna nulo para que a linha seja pulada.
+    // 5. Garante que o nome original "sujo" se torne um apelido para o mestre correto.
+    if (rawName.trim() !== masterName) {
+        await db.query('INSERT INTO embarcador_aliases (nome_alias, embarcador_id) VALUES ($1, $2) ON CONFLICT (nome_alias) DO NOTHING', [rawName.trim(), masterId]);
+    }
+    
+    return masterId;
 }
 
 
 // -----------------------------------------------------------------------------------------
-// FUNÇÃO 1: UPLOAD DA PLANILHA (usando a nova lógica interna)
+// FUNÇÃO 1: UPLOAD DA PLANILHA (usando a nova lógica)
 // -----------------------------------------------------------------------------------------
-// Em: src/controllers/operationController.js
-// Substitua a função uploadOperations inteira por esta:
-
 exports.uploadOperations = async (req, res) => {
     if (!req.file) { return res.status(400).json({ message: 'Nenhum arquivo enviado.' }); }
     const results = [];
@@ -84,8 +92,7 @@ exports.uploadOperations = async (req, res) => {
         console.warn(`Formato de data não reconhecido: "${dateString}"`);
         return null;
     };
-    
-    // Lista dos cabeçalhos na ordem EXATA em que aparecem na sua planilha CSV
+
     const csvHeaders = [
         'Aut. embarque', 'Tipo de programação', 'Situação prazo programação', 'Transportadora',
         'Número da programação', 'Booking', 'Containers', 'Número cliente', 'Tipo container',
@@ -97,9 +104,6 @@ exports.uploadOperations = async (req, res) => {
     ];
 
     fs.createReadStream(filePath, { encoding: 'utf8' })
-        // ===== MUDANÇA CRUCIAL AQUI =====
-        // headers: false diz para o parser ignorar a primeira linha do arquivo
-        // headers: csvHeaders diz para o parser usar a NOSSA lista de nomes para as colunas
         .pipe(csv({ separator: ';', headers: csvHeaders, skipLines: 1 }))
         .on('data', (data) => results.push(data))
         .on('end', async () => {
@@ -110,7 +114,6 @@ exports.uploadOperations = async (req, res) => {
                 for (const row of results) {
                     const embarcadorId = await getStandardizedShipperId(row['Embarcador']);
                     if (!embarcadorId) {
-                        console.log(`Pulando linha por embarcador não encontrado/mapeado: ${row['Embarcador']}`);
                         skippedCount++;
                         continue;
                     }
@@ -134,7 +137,7 @@ exports.uploadOperations = async (req, res) => {
                     processedCount++;
                 }
                 await client.query('COMMIT');
-                res.status(200).json({ message: `${processedCount} operações processadas. ${skippedCount} linhas puladas por embarcador não mapeado.` });
+                res.status(200).json({ message: `${processedCount} operações processadas. ${skippedCount} linhas puladas por embarcador inválido.` });
             } catch (error) {
                 await client.query('ROLLBACK');
                 console.error('Erro ao processar o arquivo CSV:', error);
@@ -146,68 +149,40 @@ exports.uploadOperations = async (req, res) => {
         });
 };
 
-
 // -----------------------------------------------------------------------------------------
-// FUNÇÃO 2: BUSCA DE OPERAÇÕES PARA O DASHBOARD (COM TUDO)
+// FUNÇÃO 2: BUSCA DE OPERAÇÕES PARA O DASHBOARD
 // -----------------------------------------------------------------------------------------
 exports.getOperations = async (req, res) => {
   try {
     const { page = 1, limit = 20, embarcador_id, booking, data_previsao, status, sortBy, sortOrder } = req.query;
     const offset = (page - 1) * limit;
-
-    let whereClauses = [];
-    let filterParams = [];
-    let paramCount = 1;
-
+    let whereClauses = []; let filterParams = []; let paramCount = 1;
     if (embarcador_id) { whereClauses.push(`op.embarcador_id = $${paramCount++}`); filterParams.push(embarcador_id); }
     if (booking) { whereClauses.push(`op.booking ILIKE $${paramCount++}`); filterParams.push(`%${booking}%`); }
     if (data_previsao) { whereClauses.push(`op.previsao_inicio_atendimento::date = $${paramCount++}`); filterParams.push(data_previsao); }
-    if (status === 'atrasadas') {
-        whereClauses.push(`(op.dt_inicio_execucao > op.previsao_inicio_atendimento OR (op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW()))`);
-    } else if (status === 'on_time') {
-        whereClauses.push(`(op.dt_inicio_execucao <= op.previsao_inicio_atendimento OR (op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento >= NOW()))`);
-    }
-
+    if (status === 'atrasadas') { whereClauses.push(`(op.dt_inicio_execucao > op.previsao_inicio_atendimento OR (op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW()))`); } 
+    else if (status === 'on_time') { whereClauses.push(`(op.dt_inicio_execucao <= op.previsao_inicio_atendimento OR (op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento >= NOW()))`); }
     const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-    
     const sortableColumns = ['booking', 'containers', 'nome_embarcador', 'porto', 'previsao_inicio_atendimento'];
     const orderByColumn = sortableColumns.includes(sortBy) ? `"${sortBy}"` : 'previsao_inicio_atendimento';
     const orderDirection = sortOrder === 'asc' ? 'ASC' : 'DESC';
-
     const countQuery = `SELECT COUNT(*) FROM operacoes op ${whereString}`;
     const countResult = await db.query(countQuery, filterParams);
     const totalItems = parseInt(countResult.rows[0].count, 10);
-
     const dataQuery = `
-      SELECT 
-        op.*,
-        emb.nome_principal AS nome_embarcador,
-        CASE 
-          WHEN op.tipo_programacao ILIKE '%entrega%' THEN op.pod
-          ELSE op.pol
-        END AS porto,
-        CASE
-          WHEN op.dt_inicio_execucao > op.previsao_inicio_atendimento THEN
-            TRUNC(EXTRACT(EPOCH FROM (op.dt_inicio_execucao - op.previsao_inicio_atendimento)) / 3600) || 'h ' ||
-            TO_CHAR((op.dt_inicio_execucao - op.previsao_inicio_atendimento), 'MI"m"')
-          WHEN op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW() THEN
-            TRUNC(EXTRACT(EPOCH FROM (NOW() - op.previsao_inicio_atendimento)) / 3600) || 'h ' ||
-            TO_CHAR((NOW() - op.previsao_inicio_atendimento), 'MI"m"')
-          ELSE 'ON TIME'
-        END AS atraso
-      FROM 
-        operacoes op 
-      JOIN 
-        embarcadores emb ON op.embarcador_id = emb.id
-      ${whereString} 
-      ORDER BY ${orderByColumn} ${orderDirection}, op.id DESC
-      LIMIT $${paramCount++} OFFSET $${paramCount++};
-    `;
+      SELECT op.*, emb.nome_principal AS nome_embarcador,
+      CASE WHEN op.tipo_programacao ILIKE '%entrega%' THEN op.pod ELSE op.pol END AS porto,
+      CASE
+        WHEN op.dt_inicio_execucao > op.previsao_inicio_atendimento THEN TRUNC(EXTRACT(EPOCH FROM (op.dt_inicio_execucao - op.previsao_inicio_atendimento)) / 3600) || 'h ' || TO_CHAR((op.dt_inicio_execucao - op.previsao_inicio_atendimento), 'MI"m"')
+        WHEN op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW() THEN TRUNC(EXTRACT(EPOCH FROM (NOW() - op.previsao_inicio_atendimento)) / 3600) || 'h ' || TO_CHAR((NOW() - op.previsao_inicio_atendimento), 'MI"m"')
+        ELSE 'ON TIME'
+      END AS atraso
+      FROM operacoes op JOIN embarcadores emb ON op.embarcador_id = emb.id
+      ${whereString} ORDER BY ${orderByColumn} ${orderDirection}, op.id DESC
+      LIMIT $${paramCount++} OFFSET $${paramCount++};`;
     const queryParams = [...filterParams, limit, offset];
     const dataResult = await db.query(dataQuery, queryParams);
-    
     const totalPages = Math.ceil(totalItems / limit);
-
     res.status(200).json({
       data: dataResult.rows,
       pagination: { totalItems, totalPages, currentPage: parseInt(page, 10), limit: parseInt(limit, 10) }
@@ -225,21 +200,14 @@ exports.trackOperationPublic = async (req, res) => {
   try {
     const { tracking_code } = req.params;
     const query = `
-      SELECT 
-        emb.nome_principal AS nome_embarcador,
-        op.status_operacao, op.previsao_inicio_atendimento, op.dt_inicio_execucao,
-        op.dt_fim_execucao, op.dt_previsao_entrega_recalculada, op.booking,
-        op.containers, op.tipo_programacao, op.nome_motorista, op.placa_veiculo,
-        op.placa_carreta, op.cpf_motorista
-      FROM operacoes op
-      JOIN embarcadores emb ON op.embarcador_id = emb.id
-      WHERE op.booking ILIKE $1 OR op.containers ILIKE $2;
-    `;
+      SELECT emb.nome_principal AS nome_embarcador, op.status_operacao, op.previsao_inicio_atendimento, op.dt_inicio_execucao,
+        op.dt_fim_execucao, op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao, 
+        op.nome_motorista, op.placa_veiculo, op.placa_carreta, op.cpf_motorista
+      FROM operacoes op JOIN embarcadores emb ON op.embarcador_id = emb.id
+      WHERE op.booking ILIKE $1 OR op.containers ILIKE $2;`;
     const queryParams = [tracking_code, `%${tracking_code}%`];
     const { rows } = await db.query(query, queryParams);
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Operação não encontrada.' });
-    }
+    if (rows.length === 0) { return res.status(404).json({ message: 'Operação não encontrada.' }); }
     res.status(200).json(rows);
   } catch (error) {
     console.error('Erro no rastreamento público:', error);

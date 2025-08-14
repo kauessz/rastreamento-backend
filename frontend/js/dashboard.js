@@ -1,8 +1,7 @@
 // =========================================================================================
-//                                     dashboard.js (Versão Definitiva)
+//                                     dashboard.js (Versão Final e Corrigida)
 // =========================================================================================
 
-// --- FUNÇÃO DE OTIMIZAÇÃO (DEBOUNCE) ---
 function debounce(func, delay = 500) {
     let timeout;
     return (...args) => {
@@ -13,7 +12,6 @@ function debounce(func, delay = 500) {
     };
 }
 
-// --- LÓGICA DO DARK MODE ---
 const themeToggle = document.getElementById('checkbox');
 const body = document.body;
 const savedTheme = localStorage.getItem('theme');
@@ -26,10 +24,8 @@ themeToggle.addEventListener('change', () => {
     localStorage.setItem('theme', body.classList.contains('dark-mode') ? 'dark-mode' : 'light-mode');
 });
 
-// --- LÓGICA PRINCIPAL DO DASHBOARD ---
 document.addEventListener('DOMContentLoaded', () => {
-
-    // --- 1. SELEÇÃO DOS ELEMENTOS DO HTML ---
+    
     const userEmail = document.getElementById('userEmail');
     const logoutButton = document.getElementById('logoutButton');
     const pendingUsersList = document.getElementById('pendingUsersList');
@@ -45,17 +41,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('fileInput');
     const uploadMessage = document.getElementById('uploadMessage');
     const kpiContainer = document.querySelector('.kpi-container');
-
-    // ===== CORREÇÃO DEFINITIVA: Capturamos o "contexto de desenho" dos canvas UMA VEZ. =====
-    const ofensoresCtx = document.getElementById('ofensoresChart').getContext('2d');
-    const clientesCtx = document.getElementById('clientesChart').getContext('2d');
-
+    
     let currentToken = null;
     let currentSort = { column: 'previsao_inicio_atendimento', order: 'desc' };
-    window.ofensoresChart = null;
-    window.clientesChart = null;
 
-    // --- 2. AUTENTICAÇÃO E CARGA INICIAL DOS DADOS ---
     auth.onAuthStateChanged(async (user) => {
         if (user) {
             userEmail.textContent = user.email;
@@ -74,7 +63,6 @@ document.addEventListener('DOMContentLoaded', () => {
     logoutButton.addEventListener('click', () => auth.signOut());
 
     function loadInitialData() {
-        // A versão com setTimeout não é mais necessária com a nova abordagem de contexto
         const filters = getCurrentFilters();
         fetchPendingUsers();
         fetchOperations(1, filters);
@@ -82,7 +70,6 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchAndRenderKpis(filters);
     }
 
-    // --- 3. LÓGICA DE UPLOAD DE ARQUIVO ---
     uploadForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!fileInput.files.length) {
@@ -93,7 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.append('file', file);
         uploadMessage.textContent = 'Enviando arquivo...';
         try {
-            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/operations/upload', {
+            const response = await fetch(`${API_BASE_URL}/api/operations/upload`, {
                 method: 'POST', headers: { 'Authorization': `Bearer ${currentToken}` }, body: formData,
             });
             const result = await response.json();
@@ -106,10 +93,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // --- 4. LÓGICA DOS FILTROS GLOBAIS ---
     async function populateEmbarcadorFilter() {
         try {
-            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/embarcadores', { headers: { 'Authorization': `Bearer ${currentToken}` } });
+            const response = await fetch(`${API_BASE_URL}/api/embarcadores`, { headers: { 'Authorization': `Bearer ${currentToken}` } });
             if (!response.ok) throw new Error('Falha ao buscar embarcadores.');
             const embarcadores = await response.json();
             embarcadorFilter.innerHTML = '<option value="">Todos Embarcadores</option>';
@@ -129,12 +115,12 @@ document.addEventListener('DOMContentLoaded', () => {
             data_previsao: dataPrevisaoFilter.value,
         };
     }
-
+    
     function applyFilters() {
         const filters = getCurrentFilters();
         currentSort = { column: 'previsao_inicio_atendimento', order: 'desc' };
         fetchOperations(1, filters);
-        fetchAndRenderKpis(filters);
+        fetchAndRenderKpis(filters); 
     }
 
     filterButton.addEventListener('click', applyFilters);
@@ -142,27 +128,19 @@ document.addEventListener('DOMContentLoaded', () => {
         bookingFilter.value = ''; embarcadorFilter.value = ''; dataPrevisaoFilter.value = '';
         applyFilters();
     });
-
+    
     embarcadorFilter.addEventListener('change', applyFilters);
     dataPrevisaoFilter.addEventListener('change', applyFilters);
     bookingFilter.addEventListener('input', debounce(applyFilters, 500));
 
-    // --- 5. LÓGICA DE KPIs E GRÁFICOS ---
     async function fetchAndRenderKpis(filters = {}) {
         if (!currentToken) return;
-
-        // Constrói a URL com os parâmetros de filtro
-        const url = new URL('https://rastreamento-backend-05pi.onrender.com/api/dashboard/kpis');
+        const url = new URL(`${API_BASE_URL}/api/dashboard/kpis`);
         Object.keys(filters).forEach(key => {
-            if (filters[key]) {
-                url.searchParams.append(key, filters[key]);
-            }
+            if (filters[key]) url.searchParams.append(key, filters[key]);
         });
-
         try {
-            const response = await fetch(url.toString(), {
-                headers: { 'Authorization': `Bearer ${currentToken}` }
-            });
+            const response = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${currentToken}` } });
             if (!response.ok) throw new Error('Falha ao buscar KPIs.');
             const { kpis, grafico_ofensores, grafico_clientes_atraso } = await response.json();
 
@@ -171,35 +149,42 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelector('#kpi-atrasadas .kpi-value').textContent = kpis.operacoes_atrasadas;
             document.querySelector('#kpi-percentual .kpi-value').textContent = `${kpis.percentual_atraso}%`;
 
-            // Passamos as instâncias do gráfico para a função e recebemos as novas de volta
-            window.ofensoresChart = renderChart(window.ofensoresChart, 'ofensoresChart', 'bar', grafico_ofensores.labels, grafico_ofensores.data, 'Nº de Ocorrências', 'y');
-            window.clientesChart = renderChart(window.clientesChart, 'clientesChart', 'bar', grafico_clientes_atraso.labels, grafico_clientes_atraso.data, 'Nº de Atrasos', 'y');
-
+            renderChart('ofensoresChart', 'bar', grafico_ofensores.labels, grafico_ofensores.data, 'Nº de Ocorrências', 'y');
+            renderChart('clientesChart', 'bar', grafico_clientes_atraso.labels, grafico_clientes_atraso.data, 'Nº de Atrasos', 'y');
         } catch (error) { console.error(error); }
     }
+    
+    // ===== FUNÇÃO renderChart CORRIGIDA E FINAL =====
+    function renderChart(canvasId, type, labels, data, label, axis = 'y') {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
 
-    function renderChart(chartInstance, canvasId, type, labels, data, label, axis = 'y') {
-        const ctx = document.getElementById(canvasId).getContext('2d');
-        if (window[canvasId] instanceof Chart) {
-            window[canvasId].destroy();
+        // Pega a instância do gráfico diretamente do canvas, se existir, e a destrói.
+        const existingChart = Chart.getChart(canvas);
+        if (existingChart) {
+            existingChart.destroy();
         }
-        window[canvasId] = new Chart(ctx, {
+
+        // Cria o novo gráfico.
+        new Chart(ctx, {
             type: type,
             data: {
                 labels: labels,
-                datasets: [{ label: label, data: data, backgroundColor: 'rgba(54, 162, 235, 1.0)', borderColor: 'rgba(54, 162, 235, 1)', borderWidth: 1 }]
+                datasets: [{ 
+                    label: label, 
+                    data: data, 
+                    backgroundColor: 'rgba(54, 162, 235, 1.0)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }]
             },
-            options: {
-                indexAxis: axis,
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: { x: { beginAtZero: true } },
-                layout: {
-                    padding: {
-                        left: 50,
-                        right: 30
-                    }
-                }
+            options: { 
+                indexAxis: axis, 
+                responsive: true, 
+                maintainAspectRatio: false, 
+                scales: { x: { beginAtZero: true } }, 
+                layout: { padding: { left: 50, right: 30 } } 
             }
         });
     }
@@ -213,11 +198,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // --- 6. LÓGICA DA TABELA DE OPERAÇÕES ---
     async function fetchOperations(page = 1, filters = {}) {
         if (!currentToken) return;
         operationsTableBody.innerHTML = `<tr><td colspan="9">Carregando...</td></tr>`;
-        let url = new URL('https://rastreamento-backend-05pi.onrender.com/api/operations');
+        let url = new URL(`${API_BASE_URL}/api/operations`);
         url.searchParams.append('page', page);
         url.searchParams.append('limit', 20);
         url.searchParams.append('sortBy', currentSort.column);
@@ -307,23 +291,23 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         fetchOperations(1, getCurrentFilters());
     });
-
+    
     function updateSortIndicators() {
         operationsTableHead.querySelectorAll('th[data-sort]').forEach(th => {
-            th.innerHTML = th.dataset.sort.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()); // Reset text
-            th.classList.remove('sort-asc', 'sort-desc');
+            let text = th.textContent.replace(/ [▲▼↕]/, '');
+            th.innerHTML = text;
             if (th.dataset.sort === currentSort.column) {
-                th.classList.add(currentSort.order === 'asc' ? 'sort-asc' : 'sort-desc');
-                th.innerHTML += currentSort.order === 'asc' ? ' ▲' : ' ▼';
+                th.innerHTML += currentSort.order === 'asc' ? ' <span class="sort-arrow">▲</span>' : ' <span class="sort-arrow">▼</span>';
+            } else {
+                 th.innerHTML += ' <span class="sort-arrow">↕</span>';
             }
         });
     }
 
-    // --- 7. LÓGICA DE APROVAÇÃO DE USUÁRIOS ---
     async function fetchPendingUsers() {
         if (!currentToken) return;
         try {
-            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/users/admin/pending', { headers: { 'Authorization': `Bearer ${currentToken}` } });
+            const response = await fetch(`${API_BASE_URL}/api/users/admin/pending`, { headers: { 'Authorization': `Bearer ${currentToken}` } });
             if (!response.ok) throw new Error((await response.json()).message);
             const users = await response.json();
             renderPendingUsers(users);
@@ -332,7 +316,7 @@ document.addEventListener('DOMContentLoaded', () => {
             pendingUsersList.innerHTML = `<p style="color: red;">${error.message}</p>`;
         }
     }
-
+    
     function renderPendingUsers(users) {
         pendingUsersList.innerHTML = '';
         if (users.length === 0) {
@@ -356,7 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function approveUser(userId) {
         if (!confirm('Tem certeza que deseja aprovar este usuário?')) return;
         try {
-            const response = await fetch(`https://rastreamento-backend-05pi.onrender.com/api/users/admin/approve/${userId}`, {
+            const response = await fetch(`${API_BASE_URL}/api/users/admin/approve/${userId}`, {
                 method: 'PUT', headers: { 'Authorization': `Bearer ${currentToken}` }
             });
             if (!response.ok) throw new Error((await response.json()).message);
@@ -367,35 +351,4 @@ document.addEventListener('DOMContentLoaded', () => {
             alert(error.message);
         }
     }
-
-    // --- 8. LÓGICA DO BOTÃO DE LIMPAR OPERAÇÕES ---
-    const clearOperationsButton = document.getElementById('clearOperationsButton');
-
-    clearOperationsButton.addEventListener('click', async () => {
-        // DUPLA CONFIRMAÇÃO PARA UMA AÇÃO DESTRUTIVA
-        const firstConfirm = confirm("Tem certeza ABSOLUTA que deseja apagar TODAS as operações? Esta ação não pode ser desfeita.");
-        
-        if (firstConfirm) {
-            const secondConfirm = confirm("Esta é sua última chance. Confirma a exclusão de TODOS os dados de operações?");
-
-            if (secondConfirm) {
-                try {
-                    const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/operations/all', {
-                        method: 'DELETE',
-                        headers: { 'Authorization': `Bearer ${currentToken}` },
-                    });
-
-                    const result = await response.json();
-                    if (!response.ok) throw new Error(result.message);
-
-                    alert(result.message);
-                    loadInitialData(); // Atualiza o dashboard, que agora estará vazio
-
-                } catch (error) {
-                    alert(`Erro: ${error.message}`);
-                    console.error("Erro ao limpar operações:", error);
-                }
-            }
-        }
-    });
 });

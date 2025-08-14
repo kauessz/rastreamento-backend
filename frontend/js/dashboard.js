@@ -25,7 +25,7 @@ themeToggle.addEventListener('change', () => {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
-    
+
     const userEmail = document.getElementById('userEmail');
     const logoutButton = document.getElementById('logoutButton');
     const pendingUsersList = document.getElementById('pendingUsersList');
@@ -41,7 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('fileInput');
     const uploadMessage = document.getElementById('uploadMessage');
     const kpiContainer = document.querySelector('.kpi-container');
-    
+
     let currentToken = null;
     let currentSort = { column: 'previsao_inicio_atendimento', order: 'desc' };
 
@@ -115,12 +115,12 @@ document.addEventListener('DOMContentLoaded', () => {
             data_previsao: dataPrevisaoFilter.value,
         };
     }
-    
+
     function applyFilters() {
         const filters = getCurrentFilters();
         currentSort = { column: 'previsao_inicio_atendimento', order: 'desc' };
         fetchOperations(1, filters);
-        fetchAndRenderKpis(filters); 
+        fetchAndRenderKpis(filters);
     }
 
     filterButton.addEventListener('click', applyFilters);
@@ -128,7 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
         bookingFilter.value = ''; embarcadorFilter.value = ''; dataPrevisaoFilter.value = '';
         applyFilters();
     });
-    
+
     embarcadorFilter.addEventListener('change', applyFilters);
     dataPrevisaoFilter.addEventListener('change', applyFilters);
     bookingFilter.addEventListener('input', debounce(applyFilters, 500));
@@ -153,38 +153,47 @@ document.addEventListener('DOMContentLoaded', () => {
             renderChart('clientesChart', 'bar', grafico_clientes_atraso.labels, grafico_clientes_atraso.data, 'Nº de Atrasos', 'y');
         } catch (error) { console.error(error); }
     }
-    
+
     // ===== FUNÇÃO renderChart CORRIGIDA E FINAL =====
+
     function renderChart(canvasId, type, labels, data, label, axis = 'y') {
         const canvas = document.getElementById(canvasId);
-        if (!canvas) return;
+        // Se, por algum motivo, o canvas não for encontrado, a função para aqui para evitar erros.
+        if (!canvas) {
+            console.error(`Elemento canvas com id "${canvasId}" não foi encontrado.`);
+            return;
+        }
         const ctx = canvas.getContext('2d');
 
-        // Pega a instância do gráfico diretamente do canvas, se existir, e a destrói.
+        // ===== CORREÇÃO DEFINITIVA =====
+        // Usamos o método oficial do Chart.js para pegar qualquer gráfico que já exista neste canvas.
         const existingChart = Chart.getChart(canvas);
+
+        // Se um gráfico existir, nós o destruímos completamente antes de prosseguir.
         if (existingChart) {
             existingChart.destroy();
         }
+        // ===============================
 
-        // Cria o novo gráfico.
+        // Agora, com a certeza de que a tela está limpa, criamos o novo gráfico.
         new Chart(ctx, {
             type: type,
             data: {
                 labels: labels,
-                datasets: [{ 
-                    label: label, 
-                    data: data, 
+                datasets: [{
+                    label: label,
+                    data: data,
                     backgroundColor: 'rgba(54, 162, 235, 1.0)',
                     borderColor: 'rgba(54, 162, 235, 1)',
                     borderWidth: 1
                 }]
             },
-            options: { 
-                indexAxis: axis, 
-                responsive: true, 
-                maintainAspectRatio: false, 
-                scales: { x: { beginAtZero: true } }, 
-                layout: { padding: { left: 50, right: 30 } } 
+            options: {
+                indexAxis: axis,
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { x: { beginAtZero: true } },
+                layout: { padding: { left: 50, right: 30 } }
             }
         });
     }
@@ -291,7 +300,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         fetchOperations(1, getCurrentFilters());
     });
-    
+
     function updateSortIndicators() {
         operationsTableHead.querySelectorAll('th[data-sort]').forEach(th => {
             let text = th.textContent.replace(/ [▲▼↕]/, '');
@@ -299,7 +308,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (th.dataset.sort === currentSort.column) {
                 th.innerHTML += currentSort.order === 'asc' ? ' <span class="sort-arrow">▲</span>' : ' <span class="sort-arrow">▼</span>';
             } else {
-                 th.innerHTML += ' <span class="sort-arrow">↕</span>';
+                th.innerHTML += ' <span class="sort-arrow">↕</span>';
             }
         });
     }
@@ -316,7 +325,7 @@ document.addEventListener('DOMContentLoaded', () => {
             pendingUsersList.innerHTML = `<p style="color: red;">${error.message}</p>`;
         }
     }
-    
+
     function renderPendingUsers(users) {
         pendingUsersList.innerHTML = '';
         if (users.length === 0) {

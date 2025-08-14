@@ -40,6 +40,7 @@ exports.trackOperationPublic = async (req, res) => {
 // -----------------------------------------------------------------------------------------
 // FUNÇÃO 2: UPLOAD DA PLANILHA (com a nova lógica de IA)
 // -----------------------------------------------------------------------------------------
+
 exports.uploadOperations = async (req, res) => {
     if (!req.file) { return res.status(400).json({ message: 'Nenhum arquivo enviado.' }); }
     const results = [];
@@ -53,7 +54,9 @@ exports.uploadOperations = async (req, res) => {
             const parsedDate = parse(dateString, format, new Date());
             if (isValid(parsedDate)) { return parsedDate.toISOString(); }
         }
-        console.warn(`Formato de data não reconhecido para o valor: "${dateString}"`);
+        // ===== DEBUG: Log de datas que falham na conversão =====
+        console.log(`[DEBUG] FALHA AO CONVERTER DATA: "${dateString}"`);
+        // =======================================================
         return null;
     };
 
@@ -62,52 +65,52 @@ exports.uploadOperations = async (req, res) => {
         .on('data', (data) => results.push(data))
         .on('end', async () => {
             try {
-                // ETAPA 1: Consultar a IA para padronizar os nomes
-                // Coleta todos os nomes de embarcadores únicos da planilha
+                // ===== DEBUG: Log da primeira linha de dados crus =====
+                if (results.length > 0) {
+                    console.log("[DEBUG] DADOS CRUS DA PRIMEIRA LINHA:", results[0]);
+                }
+                // =======================================================
+
                 const rawShipperNames = [...new Set(results.map(row => row['Embarcador']).filter(name => name))];
-                
                 let shipperNameMapping = {};
+                
                 if (rawShipperNames.length > 0) {
-                    console.log("Consultando serviço de IA para os nomes:", rawShipperNames);
-                    const aiResponse = await axios.post('https://rastreamento-ia.onrender.com/standardize', {
-                        names: rawShipperNames
-                    });
+                    // ===== DEBUG: Log dos nomes enviados para a IA =====
+                    console.log("[DEBUG] NOMES ENVIADOS PARA IA:", rawShipperNames);
+                    // ====================================================
+
+                    const aiUrl = process.env.PYTHON_AI_URL || 'http://localhost:5000/standardize';
+                    const aiResponse = await axios.post(aiUrl, { names: rawShipperNames });
                     shipperNameMapping = aiResponse.data;
-                    console.log("Mapeamento recebido da IA:", shipperNameMapping);
+
+                    // ===== DEBUG: Log da resposta da IA =====
+                    console.log("[DEBUG] MAPEAMENTO RECEBIDO DA IA:", shipperNameMapping);
+                    // ==========================================
                 }
 
                 await client.query('BEGIN');
                 for (const row of results) {
-                    // ETAPA 2: Usar o nome padronizado retornado pela IA
                     const rawName = row['Embarcador'];
-                    if (!rawName) continue; // Pula a linha se não tiver nome de embarcador
-                    
+                    if (!rawName) continue;
                     const standardizedName = shipperNameMapping[rawName] || rawName;
                     
                     let embarcadorId;
                     let embarcadorResult = await client.query('SELECT id FROM embarcadores WHERE nome_principal = $1', [standardizedName]);
-                    
                     if (embarcadorResult.rows.length > 0) {
                         embarcadorId = embarcadorResult.rows[0].id;
                     } else {
-                        // Se o embarcador mestre não existe, cria um novo
                         const newEmbarcador = await client.query('INSERT INTO embarcadores (nome_principal) VALUES ($1) RETURNING id', [standardizedName]);
                         embarcadorId = newEmbarcador.rows[0].id;
                     }
-
-                    // Se o nome original era diferente do padronizado, garante que ele exista como um alias
                     if (rawName !== standardizedName) {
-                        await client.query(
-                            'INSERT INTO embarcador_aliases (nome_alias, embarcador_id) VALUES ($1, $2) ON CONFLICT (nome_alias) DO NOTHING',
-                            [rawName, embarcadorId]
-                        );
+                        await client.query('INSERT INTO embarcador_aliases (nome_alias, embarcador_id) VALUES ($1, $2) ON CONFLICT (nome_alias) DO NOTHING', [rawName, embarcadorId]);
                     }
                     
                     const upsertQuery = `
                         INSERT INTO operacoes (numero_programacao, booking, containers, pol, pod, tipo_programacao, previsao_inicio_atendimento, dt_inicio_execucao, dt_fim_execucao, dt_previsao_entrega_recalculada, nome_motorista, placa_veiculo, placa_carreta, cpf_motorista, justificativa_atraso, embarcador_id)
                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                         ON CONFLICT (numero_programacao) DO UPDATE SET
-                        booking = EXCLUDED.booking, containers = EXCLUDED.containers, pol = EXCLUDED.pol, pod = EXCLUDED.pod, tipo_programacao = EXCLUDED.tipo_programacao, previsao_inicio_atendimento = EXcluded.previsao_inicio_atendimento, dt_inicio_execucao = EXCLUDED.dt_inicio_execucao, dt_fim_execucao = EXCLUDED.dt_fim_execucao, dt_previsao_entrega_recalculada = EXCLUDED.dt_previsao_entrega_recalculada, nome_motorista = EXCLUDED.nome_motorista, placa_veiculo = EXCLUDED.placa_veiculo, placa_carreta = EXCLUDED.placa_carreta, cpf_motorista = EXCLUDED.cpf_motorista, justificativa_atraso = EXCLUDED.justificativa_atraso, embarcador_id = EXCLUDED.embarcador_id, data_atualizacao = NOW();
+                        booking = EXCLUDED.booking, containers = EXCLUDED.containers, pol = EXCLUDED.pol, pod = EXCLUDED.pod, tipo_programacao = EXCLUDED.tipo_programacao, previsao_inicio_atendimento = EXCLUDED.previsao_inicio_atendimento, dt_inicio_execucao = EXCLUDED.dt_inicio_execucao, dt_fim_execucao = EXCLUDED.dt_fim_execucao, dt_previsao_entrega_recalculada = EXCLUDED.dt_previsao_entrega_recalculada, nome_motorista = EXCLUDED.nome_motorista, placa_veiculo = EXCLUDED.placa_veiculo, placa_carreta = EXCLUDED.placa_carreta, cpf_motorista = EXCLUDED.cpf_motorista, justificativa_atraso = EXCLUDED.justificativa_atraso, embarcador_id = EXCLUDED.embarcador_id, data_atualizacao = NOW();
                     `;
                     
                     const values = [
@@ -124,7 +127,9 @@ exports.uploadOperations = async (req, res) => {
                 res.status(200).json({ message: `${results.length} operações processadas e padronizadas com sucesso.` });
             } catch (error) {
                 await client.query('ROLLBACK');
-                console.error('Erro ao processar o arquivo CSV:', error);
+                // ===== DEBUG: Log de erro no processamento do banco =====
+                console.error('[DEBUG] ERRO DURANTE A TRANSAÇÃO COM O BANCO:', error);
+                // ========================================================
                 res.status(500).json({ message: 'Erro ao processar o arquivo.' });
             } finally {
                 client.release();

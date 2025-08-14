@@ -1,46 +1,70 @@
 // =========================================================================================
-//                                     operationController.js (Versão Final com Integração IA)
+//                                     operationController.js (Versão Final Completa)
+// Este arquivo controla o upload, a busca pública e a busca principal de operações para o dashboard.
 // =========================================================================================
 
 const fs = require('fs');
 const csv = require('csv-parser');
 const { parse, isValid } = require('date-fns');
-const axios = require('axios'); // Importamos o Axios para fazer chamadas de API
 const db = require('../config/database');
 
 // -----------------------------------------------------------------------------------------
-// FUNÇÃO 1: RASTREAMENTO PÚBLICO (sem alterações)
+// FUNÇÃO DE PADRONIZAÇÃO DE NOMES ("GERENTE INTERNO")
+// Esta função contém as regras de negócio para unificar os nomes dos embarcadores.
 // -----------------------------------------------------------------------------------------
-exports.trackOperationPublic = async (req, res) => {
-  try {
-    const { tracking_code } = req.params;
-    const query = `
-      SELECT 
-        emb.nome_principal AS nome_embarcador,
-        op.status_operacao, op.previsao_inicio_atendimento, op.dt_inicio_execucao,
-        op.dt_fim_execucao, op.dt_previsao_entrega_recalculada, op.booking,
-        op.containers, op.tipo_programacao, op.nome_motorista, op.placa_veiculo,
-        op.placa_carreta, op.cpf_motorista
-      FROM operacoes op
-      JOIN embarcadores emb ON op.embarcador_id = emb.id
-      WHERE op.booking ILIKE $1 OR op.containers ILIKE $2;
-    `;
-    const queryParams = [tracking_code, `%${tracking_code}%`];
-    const { rows } = await db.query(query, queryParams);
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Operação não encontrada.' });
+async function getStandardizedShipperId(rawName) {
+    if (!rawName || !rawName.trim()) return null;
+
+    // Regras de mapeamento: se o nome "sujo" contém uma palavra-chave, ele corresponde ao mestre.
+    // Adicione ou modifique estas regras conforme a necessidade do seu negócio.
+    const mappingRules = {
+        'AMBEV': ['AMBEV'],
+        'BRASKEM': ['BRASKEM'],
+        'PROCTER & GAMBLE': ['PROCTER', 'P&G', 'GRAMBLE'],
+        'UNILEVER': ['UNILEVER'],
+        'CECIL LAMINAÇÃO DE METAIS': ['CECIL'],
+        'OWENS-ILLINOIS': ['OWENS-ILLINOIS', 'OWENS ILLINOIS'],
+        'ELECTROLUX': ['ELECTROLUX'],
+        'SEARA ALIMENTOS': ['SEARA'],
+        'BALL': ['BALL'],
+        'VIDEOLAR': ['VIDEOLAR'],
+        'SAMSUNG': ['SAMSUNG'],
+        // Adicione outras regras aqui...
+    };
+
+    const upperRawName = rawName.toUpperCase();
+    let masterName = null;
+
+    for (const master in mappingRules) {
+        for (const keyword of mappingRules[master]) {
+            if (upperRawName.includes(keyword)) {
+                masterName = master;
+                break;
+            }
+        }
+        if (masterName) break;
     }
-    res.status(200).json(rows);
-  } catch (error) {
-    console.error('Erro no rastreamento público:', error);
-    res.status(500).json({ message: 'Erro ao buscar operação.' });
-  }
-};
+
+    // Se uma regra foi encontrada, busca o ID do cliente mestre no banco de dados.
+    if (masterName) {
+        const result = await db.query('SELECT id FROM embarcadores WHERE nome_principal = $1', [masterName]);
+        if (result.rows.length > 0) {
+            const masterId = result.rows[0].id;
+            // Garante que o nome original "sujo" vire um "apelido" para futuras otimizações.
+            await db.query('INSERT INTO embarcador_aliases (nome_alias, embarcador_id) VALUES ($1, $2) ON CONFLICT (nome_alias) DO NOTHING', [rawName, masterId]);
+            return masterId;
+        }
+    }
+
+    // Se nenhuma regra funcionou, o nome não é reconhecido.
+    console.warn(`Embarcador não mapeado: "${rawName}"`);
+    return null; // Retorna nulo para que a linha seja pulada.
+}
+
 
 // -----------------------------------------------------------------------------------------
-// FUNÇÃO 2: UPLOAD DA PLANILHA (com a nova lógica de IA)
+// FUNÇÃO 1: UPLOAD DA PLANILHA (usando a nova lógica interna)
 // -----------------------------------------------------------------------------------------
-
 exports.uploadOperations = async (req, res) => {
     if (!req.file) { return res.status(400).json({ message: 'Nenhum arquivo enviado.' }); }
     const results = [];
@@ -51,12 +75,10 @@ exports.uploadOperations = async (req, res) => {
         if (!dateString || dateString.trim() === '') return null;
         const formats = ['dd/MM/yyyy HH:mm', 'dd/MM/yyyy HH:mm:ss'];
         for (const format of formats) {
-            const parsedDate = parse(dateString, format, new Date());
+            const parsedDate = parse(dateString.trim(), format, new Date());
             if (isValid(parsedDate)) { return parsedDate.toISOString(); }
         }
-        // ===== DEBUG: Log de datas que falham na conversão =====
-        console.log(`[DEBUG] FALHA AO CONVERTER DATA: "${dateString}"`);
-        // =======================================================
+        console.warn(`Formato de data não reconhecido: "${dateString}"`);
         return null;
     };
 
@@ -64,46 +86,14 @@ exports.uploadOperations = async (req, res) => {
         .pipe(csv({ separator: ';', mapHeaders: ({ header }) => header.trim().replace(/^\uFEFF/, '') }))
         .on('data', (data) => results.push(data))
         .on('end', async () => {
+            let processedCount = 0;
             try {
-                // ===== DEBUG: Log da primeira linha de dados crus =====
-                if (results.length > 0) {
-                    console.log("[DEBUG] DADOS CRUS DA PRIMEIRA LINHA:", results[0]);
-                }
-                // =======================================================
-
-                const rawShipperNames = [...new Set(results.map(row => row['Embarcador']).filter(name => name))];
-                let shipperNameMapping = {};
-                
-                if (rawShipperNames.length > 0) {
-                    // ===== DEBUG: Log dos nomes enviados para a IA =====
-                    console.log("[DEBUG] NOMES ENVIADOS PARA IA:", rawShipperNames);
-                    // ====================================================
-
-                    const aiUrl = process.env.PYTHON_AI_URL || 'http://localhost:5000/standardize';
-                    const aiResponse = await axios.post(aiUrl, { names: rawShipperNames });
-                    shipperNameMapping = aiResponse.data;
-
-                    // ===== DEBUG: Log da resposta da IA =====
-                    console.log("[DEBUG] MAPEAMENTO RECEBIDO DA IA:", shipperNameMapping);
-                    // ==========================================
-                }
-
                 await client.query('BEGIN');
                 for (const row of results) {
-                    const rawName = row['Embarcador'];
-                    if (!rawName) continue;
-                    const standardizedName = shipperNameMapping[rawName] || rawName;
-                    
-                    let embarcadorId;
-                    let embarcadorResult = await client.query('SELECT id FROM embarcadores WHERE nome_principal = $1', [standardizedName]);
-                    if (embarcadorResult.rows.length > 0) {
-                        embarcadorId = embarcadorResult.rows[0].id;
-                    } else {
-                        const newEmbarcador = await client.query('INSERT INTO embarcadores (nome_principal) VALUES ($1) RETURNING id', [standardizedName]);
-                        embarcadorId = newEmbarcador.rows[0].id;
-                    }
-                    if (rawName !== standardizedName) {
-                        await client.query('INSERT INTO embarcador_aliases (nome_alias, embarcador_id) VALUES ($1, $2) ON CONFLICT (nome_alias) DO NOTHING', [rawName, embarcadorId]);
+                    const embarcadorId = await getStandardizedShipperId(row['Embarcador']);
+                    if (!embarcadorId) {
+                        console.log(`Pulando linha por embarcador não encontrado/mapeado: ${row['Embarcador']}`);
+                        continue;
                     }
                     
                     const upsertQuery = `
@@ -122,14 +112,13 @@ exports.uploadOperations = async (req, res) => {
                         row['CPF motorista programado'], row['Justificativa de atraso de programação'], embarcadorId
                     ];
                     await client.query(upsertQuery, values);
+                    processedCount++;
                 }
                 await client.query('COMMIT');
-                res.status(200).json({ message: `${results.length} operações processadas e padronizadas com sucesso.` });
+                res.status(200).json({ message: `${processedCount} de ${results.length} operações processadas com sucesso.` });
             } catch (error) {
                 await client.query('ROLLBACK');
-                // ===== DEBUG: Log de erro no processamento do banco =====
-                console.error('[DEBUG] ERRO DURANTE A TRANSAÇÃO COM O BANCO:', error);
-                // ========================================================
+                console.error('Erro ao processar o arquivo CSV:', error);
                 res.status(500).json({ message: 'Erro ao processar o arquivo.' });
             } finally {
                 client.release();
@@ -138,8 +127,9 @@ exports.uploadOperations = async (req, res) => {
         });
 };
 
+
 // -----------------------------------------------------------------------------------------
-// FUNÇÃO 3: BUSCA DE OPERAÇÕES PARA O DASHBOARD (sem alterações)
+// FUNÇÃO 2: BUSCA DE OPERAÇÕES PARA O DASHBOARD (COM TUDO)
 // -----------------------------------------------------------------------------------------
 exports.getOperations = async (req, res) => {
   try {
@@ -173,7 +163,10 @@ exports.getOperations = async (req, res) => {
       SELECT 
         op.*,
         emb.nome_principal AS nome_embarcador,
-        CASE WHEN op.tipo_programacao ILIKE '%entrega%' THEN op.pod ELSE op.pol END AS porto,
+        CASE 
+          WHEN op.tipo_programacao ILIKE '%entrega%' THEN op.pod
+          ELSE op.pol
+        END AS porto,
         CASE
           WHEN op.dt_inicio_execucao > op.previsao_inicio_atendimento THEN
             TRUNC(EXTRACT(EPOCH FROM (op.dt_inicio_execucao - op.previsao_inicio_atendimento)) / 3600) || 'h ' ||
@@ -183,8 +176,12 @@ exports.getOperations = async (req, res) => {
             TO_CHAR((NOW() - op.previsao_inicio_atendimento), 'MI"m"')
           ELSE 'ON TIME'
         END AS atraso
-      FROM operacoes op JOIN embarcadores emb ON op.embarcador_id = emb.id
-      ${whereString} ORDER BY ${orderByColumn} ${orderDirection}, op.id DESC
+      FROM 
+        operacoes op 
+      JOIN 
+        embarcadores emb ON op.embarcador_id = emb.id
+      ${whereString} 
+      ORDER BY ${orderByColumn} ${orderDirection}, op.id DESC
       LIMIT $${paramCount++} OFFSET $${paramCount++};
     `;
     const queryParams = [...filterParams, limit, offset];
@@ -203,7 +200,36 @@ exports.getOperations = async (req, res) => {
 };
 
 // -----------------------------------------------------------------------------------------
-// FUNÇÃO 4: DELETAR TODAS AS OPERAÇÕES (sem alterações)
+// FUNÇÃO 3: RASTREAMENTO PÚBLICO
+// -----------------------------------------------------------------------------------------
+exports.trackOperationPublic = async (req, res) => {
+  try {
+    const { tracking_code } = req.params;
+    const query = `
+      SELECT 
+        emb.nome_principal AS nome_embarcador,
+        op.status_operacao, op.previsao_inicio_atendimento, op.dt_inicio_execucao,
+        op.dt_fim_execucao, op.dt_previsao_entrega_recalculada, op.booking,
+        op.containers, op.tipo_programacao, op.nome_motorista, op.placa_veiculo,
+        op.placa_carreta, op.cpf_motorista
+      FROM operacoes op
+      JOIN embarcadores emb ON op.embarcador_id = emb.id
+      WHERE op.booking ILIKE $1 OR op.containers ILIKE $2;
+    `;
+    const queryParams = [tracking_code, `%${tracking_code}%`];
+    const { rows } = await db.query(query, queryParams);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Operação não encontrada.' });
+    }
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error('Erro no rastreamento público:', error);
+    res.status(500).json({ message: 'Erro ao buscar operação.' });
+  }
+};
+
+// -----------------------------------------------------------------------------------------
+// FUNÇÃO 4: DELETAR TODAS AS OPERAÇÕES
 // -----------------------------------------------------------------------------------------
 exports.deleteAllOperations = async (req, res) => {
   try {

@@ -244,22 +244,27 @@ document.addEventListener('DOMContentLoaded', () => {
             mainRow.style.cursor = 'pointer';
             mainRow.dataset.operationId = op.id;
             mainRow.innerHTML = `
-                <td>${op.booking || 'N/A'}</td><td>${op.containers || 'N/A'}</td><td>${op.nome_embarcador || 'N/A'}</td>
-                <td>${op.porto || 'N/A'}</td><td>${formatarData(op.previsao_inicio_atendimento)}</td>
-                <td>${formatarData(op.dt_inicio_execucao)}</td><td>${formatarData(op.dt_fim_execucao)}</td>
-                <td style="font-weight: bold; color: ${op.atraso !== 'ON TIME' ? '#dc3545' : '#28a745'};">${op.atraso}</td>
-                <td>${op.motivo_atraso || 'N/A'}</td>
-            `;
+            <td>${op.booking || 'N/A'}</td>
+            <td>${op.containers || 'N/A'}</td>
+            <td>${op.nome_embarcador || 'N/A'}</td>
+            <td>${op.porto || 'N/A'}</td>
+            <td>${formatarData(op.previsao_inicio_atendimento)}</td>
+            <td>${formatarData(op.dt_inicio_execucao)}</td>
+            <td>${formatarData(op.dt_fim_execucao)}</td>
+            <td style="font-weight: bold; color: ${op.atraso !== 'ON TIME' ? '#dc3545' : '#28a745'};">${op.atraso}</td>
+            <td>${op.justificativa_atraso || 'N/A'}</td> 
+        `;
+
             const detailsRow = document.createElement('tr');
             detailsRow.classList.add('details-row');
             detailsRow.id = `details-${op.id}`;
             detailsRow.innerHTML = `<td colspan="9" class="details-content"><div class="details-wrapper">
-                <span><strong>Nº Programação:</strong> ${op.numero_programacao || 'N/A'}</span>
-                <span><strong>Tipo:</strong> ${op.tipo_programacao || 'N/A'}</span>
-                <span><strong>Motorista:</strong> ${op.nome_motorista || 'N/A'}</span>
-                <span><strong>Veículo:</strong> ${op.placa_veiculo || 'N/A'}</span>
-                <span><strong>Carreta:</strong> ${op.placa_carreta || 'N/A'}</span>
-            </div></td>`;
+            <span><strong>Nº Programação:</strong> ${op.numero_programacao || 'N/A'}</span>
+            <span><strong>Tipo:</strong> ${op.tipo_programacao || 'N/A'}</span>
+            <span><strong>Motorista:</strong> ${op.nome_motorista || 'N/A'}</span>
+            <span><strong>Veículo:</strong> ${op.placa_veiculo || 'N/A'}</span>
+            <span><strong>Carreta:</strong> ${op.placa_carreta || 'N/A'}</span>
+        </div></td>`;
             operationsTableBody.append(mainRow, detailsRow);
         });
     }
@@ -391,7 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Cria o HTML do menu dropdown com os mestres uma vez
-        const masterOptions = masterEmbarcadoresList.map(master => 
+        const masterOptions = masterEmbarcadoresList.map(master =>
             `<option value="${master.id}">${master.nome_principal}</option>`
         ).join('');
 
@@ -419,7 +424,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Adiciona um "ouvinte" de eventos na tabela de apelidos para os botões
     aliasesTableBody.addEventListener('click', async (event) => {
         const aliasId = event.target.closest('tr').dataset.aliasId;
-        
+
         // Lógica para o botão de Reassociar/Salvar
         if (event.target.classList.contains('button-reassign')) {
             const selectElement = event.target.closest('tr').querySelector('.reassign-select');
@@ -477,10 +482,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 option.textContent = emb.nome_principal;
                 embarcadorFilter.appendChild(option);
             });
-            
+
             // Após carregar os mestres, carrega os apelidos
             fetchAndRenderAliases();
-            
+
         } catch (error) { console.error(error); }
     }
 });

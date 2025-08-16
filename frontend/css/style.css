@@ -136,3 +136,11 @@ input:checked + .slider:before { transform: translateX(20px); }
     border-left: 5px solid var(--cor-card-borda-destaque); padding: 20px;
     margin-bottom: 15px; border-radius: 5px;
 }
+
+/* Estilo para botões de ação primária dentro de tabelas */
+.button-reassign {
+    background-color: #007bff;
+}
+.button-reassign:hover {
+    background-color: #0056b3;
+}

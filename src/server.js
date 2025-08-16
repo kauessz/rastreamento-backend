@@ -1,4 +1,4 @@
-// server.js — atualizado
+// server.js — atualizado com escopo por empresa via session-id do Dialogflow Messenger
 // Express + CORS + Webhook Dialogflow + rotas da API
 
 require('dotenv').config();
@@ -28,12 +28,35 @@ app.use((req, _res, next) => {
 });
 
 // -----------------------------
-// Webhook do Dialogflow
+// Helpers
 // -----------------------------
 function toBR(iso) {
   try { return new Date(iso).toLocaleDateString('pt-BR'); } catch { return iso; }
 }
 
+// Lê o session-id enviado pelo Dialogflow Messenger
+// Formato esperado no front:
+//  - cliente: "client:<companyId>:<email>"
+//  - admin:   "admin:0:<email>"
+function parseSession(req) {
+  const sessionPath = req.body?.session || ''; // ex: projects/xxx/agent/sessions/client:123:usuario
+  const sessionId = sessionPath.split('/').pop() || '';
+  const [role = 'client', companyStr = '0'] = sessionId.split(':');
+  const companyId = Number(companyStr) || 0;
+  return { role, companyId, sessionId };
+}
+
+// Monta cláusula de filtro por empresa quando for cliente
+function companyFilter(alias, nextParamIndex, role, companyId) {
+  if (role === 'client' && companyId > 0) {
+    return { clause: ` AND ${alias}.embarcador_id = $${nextParamIndex}`, value: companyId };
+  }
+  return { clause: '', value: null };
+}
+
+// -----------------------------
+// Webhook do Dialogflow
+// -----------------------------
 const dfHandler = async (req, res) => {
   try {
     // Segurança simples por token (defina DF_TOKEN no Render e envie o mesmo no header x-dialogflow-token)
@@ -43,6 +66,9 @@ const dfHandler = async (req, res) => {
         return res.status(401).json({ fulfillmentText: 'Unauthorized' });
       }
     }
+
+    // Pega role/companyId do session-id
+    const { role, companyId } = parseSession(req);
 
     const intentName = (req.body?.queryResult?.intent?.displayName || '').replace(/\s+/g, '');
     const p = req.body?.queryResult?.parameters || {};
@@ -58,25 +84,36 @@ const dfHandler = async (req, res) => {
     }
 
     // -----------------
-    // RastrearCarga
+    // RastrearCarga (booking OU container) com filtro por empresa quando cliente
     // -----------------
     if (intentName === 'RastrearCarga') {
       if (!booking && !container) {
         return res.json({ fulfillmentText: 'Me diga o *booking* ou o número do *container* para eu rastrear 🙂' });
       }
       try {
+        const params = [];
+        const likeBooking = booking ? `%${booking}%` : '';
+        const likeContainer = container ? `%${container}%` : '';
+        params.push(likeBooking, likeContainer);
+
+        const filt = companyFilter('op', params.length + 1, role, companyId);
+        if (filt.value !== null) params.push(filt.value);
+
         const sql = `
           SELECT emb.nome_principal AS embarcador, op.status_operacao,
                  op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
                  op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
           FROM operacoes op
           JOIN embarcadores emb ON op.embarcador_id = emb.id
-          WHERE ($1 <> '' AND op.booking ILIKE $1)
-             OR ($2 <> '' AND REPLACE(REPLACE(op.containers,'-',''),' ','') ILIKE $2)
+          WHERE (
+            ($1 <> '' AND op.booking ILIKE $1)
+            OR ($2 <> '' AND REPLACE(REPLACE(op.containers,'-',''),' ','') ILIKE $2)
+          )
+          ${filt.clause}
           ORDER BY op.id DESC
           LIMIT 3;`;
-        const values = [ booking ? `%${booking}%` : '', container ? `%${container}%` : '' ];
-        const { rows } = await db.query(sql, values);
+
+        const { rows } = await db.query(sql, params);
 
         if (!rows.length) {
           return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código pra mim?' });
@@ -98,12 +135,17 @@ const dfHandler = async (req, res) => {
     }
 
     // -----------------
-    // TopOfensores
+    // TopOfensores — com filtro por empresa quando cliente
     // -----------------
     if (intentName === 'TopOfensores') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
       const end   = period.endDate   || new Date().toISOString();
+
+      const params = [start, end];
+      const filt = companyFilter('op', params.length + 1, role, companyId);
+      if (filt.value !== null) params.push(filt.value);
+
       const q = `
         SELECT emb.nome_principal AS embarcador, COUNT(*) AS qtd
         FROM operacoes op
@@ -113,17 +155,19 @@ const dfHandler = async (req, res) => {
             (op.dt_inicio_execucao > op.previsao_inicio_atendimento)
             OR (op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW())
           )
+        ${filt.clause}
         GROUP BY 1
         ORDER BY qtd DESC
         LIMIT 10;`;
-      const { rows } = await db.query(q, [start, end]);
+
+      const { rows } = await db.query(q, params);
       if (!rows.length) return res.json({ fulfillmentText: 'Sem atrasos no período 👏' });
       const txt = rows.map((r, i) => `${i + 1}. ${r.embarcador}: ${r.qtd}`).join('\n');
       return res.json({ fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}):\n${txt}` });
     }
 
     // -----------------
-    // RelatorioPeriodo
+    // RelatorioPeriodo (tipo "atrasos") — com filtro por empresa quando cliente
     // -----------------
     if (intentName === 'RelatorioPeriodo') {
       const period = p['date-period'] || {};
@@ -132,13 +176,19 @@ const dfHandler = async (req, res) => {
       const tipo  = (p.report_type || 'atrasos').toString();
 
       if (tipo === 'atrasos') {
+        const params = [start, end];
+        const filt = companyFilter('op', params.length + 1, role, companyId);
+        if (filt.value !== null) params.push(filt.value);
+
         const q = `
           SELECT COUNT(*) FILTER (WHERE op.dt_inicio_execucao > op.previsao_inicio_atendimento) AS iniciadas_atrasadas,
                  COUNT(*) FILTER (WHERE op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW()) AS nao_iniciadas_atrasadas,
                  COUNT(*) AS total
           FROM operacoes op
-          WHERE op.previsao_inicio_atendimento BETWEEN $1 AND $2;`;
-        const { rows } = await db.query(q, [start, end]);
+          WHERE op.previsao_inicio_atendimento BETWEEN $1 AND $2
+          ${filt.clause};`;
+
+        const { rows } = await db.query(q, params);
         const r = rows[0] || { iniciadas_atrasadas: 0, nao_iniciadas_atrasadas: 0, total: 0 };
         return res.json({ fulfillmentText:
           `Resumo ${toBR(start)}–${toBR(end)}:\n• Iniciadas com atraso: ${r.iniciadas_atrasadas}\n• Não iniciadas e vencidas: ${r.nao_iniciadas_atrasadas}\n• Total: ${r.total}` });
@@ -161,7 +211,7 @@ app.post('/api/webhook/dialogflow', dfHandler);
 app.post('/webhook/dialogflow', dfHandler);
 
 // -----------------------------
-// Rotas da sua API
+// Demais rotas da sua API
 // -----------------------------
 app.use('/api/users', userRoutes);
 app.use('/api/operations', operationRoutes);
@@ -172,6 +222,7 @@ app.use('/api/client', clientRoutes);
 // Healthcheck
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 
+// Subir servidor
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);

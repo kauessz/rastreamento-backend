@@ -1,10 +1,34 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
     <meta charset="UTF-8">
     <title>Minhas Operações - Rastreamento</title>
     <link rel="stylesheet" href="css/style.css">
+    <script src="https://www.gstatic.com/dialogflow-console/fast/messenger/bootstrap.js?v=1"></script>
+    <style>
+        /* tema claro/escuro do widget alinhado ao site */
+        df-messenger {
+            --df-messenger-font-color: #101828;
+            --df-messenger-button-titlebar-color: #1f6feb;
+            --df-messenger-chat-background-color: #ffffff;
+            --df-messenger-bot-message: #eef2ff;
+            --df-messenger-user-message: #e7f5ff;
+            --df-messenger-send-icon: #1f6feb;
+            z-index: 9999;
+        }
+
+        body.dark-mode df-messenger {
+            --df-messenger-font-color: #e5e7eb;
+            --df-messenger-button-titlebar-color: #3b82f6;
+            --df-messenger-chat-background-color: #0b1220;
+            --df-messenger-bot-message: #0f172a;
+            --df-messenger-user-message: #111827;
+            --df-messenger-send-icon: #93c5fd;
+        }
+    </style>
 </head>
+
 <body>
     <header>
         <div class="logo">Portal do Cliente</div>
@@ -27,10 +51,14 @@
         <section class="dashboard-section">
             <h2>Minha Visão Geral</h2>
             <div class="kpi-container">
-                <div class="kpi-card" id="kpi-total"><span class="kpi-value">0</span><span class="kpi-label">Total de Operações</span></div>
-                <div class="kpi-card" id="kpi-ontime"><span class="kpi-value">0</span><span class="kpi-label">On Time</span></div>
-                <div class="kpi-card" id="kpi-atrasadas"><span class="kpi-value">0</span><span class="kpi-label">Atrasadas</span></div>
-                <div class="kpi-card" id="kpi-percentual"><span class="kpi-value">0%</span><span class="kpi-label">% de Atraso</span></div>
+                <div class="kpi-card" id="kpi-total"><span class="kpi-value">0</span><span class="kpi-label">Total de
+                        Operações</span></div>
+                <div class="kpi-card" id="kpi-ontime"><span class="kpi-value">0</span><span class="kpi-label">On
+                        Time</span></div>
+                <div class="kpi-card" id="kpi-atrasadas"><span class="kpi-value">0</span><span
+                        class="kpi-label">Atrasadas</span></div>
+                <div class="kpi-card" id="kpi-percentual"><span class="kpi-value">0%</span><span class="kpi-label">% de
+                        Atraso</span></div>
             </div>
         </section>
 
@@ -65,5 +93,36 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
     <script src="js/firebase-init.js"></script>
     <script src="js/client-dashboard.js"></script>
+    <!-- Chat do Assistente (Dialogflow Messenger) -->
+    <df-messenger chat-title="Assistente de Rastreamento" agent-id="AGENT_ID_AQUI" language-code="pt-br" expand="false">
+    </df-messenger>
+
+    <script>
+        // Esses valores podem vir do seu backend/login.
+        // Ex.: preencha window.CLIENT_COMPANY_ID em js/client-dashboard.js após buscar o perfil.
+        window.CLIENT_COMPANY_ID = window.CLIENT_COMPANY_ID || 123; // embarcador_id do cliente (placeholder)
+        window.AUTH_EMAIL = window.AUTH_EMAIL || ''; // será setado pelo Firebase no JS
+
+        // Define session-id: client:<companyId>:<email>
+        (function setDfSessionId() {
+            const df = document.querySelector('df-messenger');
+            if (!df) return setTimeout(setDfSessionId, 300);
+
+            // tenta pegar e-mail da UI (preenchido pelo Firebase)
+            const emailEl = document.getElementById('userEmail');
+            const email = emailEl && emailEl.textContent ? emailEl.textContent.replace('Olá, ', '') : window.AUTH_EMAIL || 'cliente@exemplo.com';
+
+            df.setAttribute('session-id', `client:${window.CLIENT_COMPANY_ID}:${email}`);
+        })();
+
+        // Função usada pelo botão "Perguntar ao Assistente"
+        window.openAssistant = function () {
+            const df = document.querySelector('df-messenger');
+            if (df) df.setAttribute('expanded', 'true');
+        };
+    </script>
+
+
 </body>
+
 </html>

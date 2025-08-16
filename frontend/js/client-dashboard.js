@@ -30,6 +30,18 @@ document.addEventListener('DOMContentLoaded', () => {
             userEmail.textContent = `Olá, ${user.email}`;
             try {
                 currentToken = await user.getIdToken();
+                try {
+                    const resp = await fetch('http://localhost:3001/api/client/profile', {
+                        headers: { 'Authorization': `Bearer ${currentToken}` }
+                    });
+                    if (resp.ok) {
+                        const profile = await resp.json();
+                        // ajuste o nome do campo conforme seu backend (ex.: profile.embarcador_id)
+                        window.CLIENT_COMPANY_ID = profile.embarcador_id || profile.companyId || window.CLIENT_COMPANY_ID;
+                        window.AUTH_EMAIL = user.email; // para o script do df-messenger
+                    }
+                } catch (e) { console.warn('Falha ao buscar perfil do cliente:', e); }
+                
                 fetchClientKpis();
                 fetchClientOperations();
             } catch (error) {

@@ -12,8 +12,10 @@ const pool = new Pool({
   password: isProduction ? undefined : process.env.DB_PASSWORD,
   port: isProduction ? undefined : process.env.DB_PORT,
   ssl: isProduction ? { rejectUnauthorized: false } : false,
-  // ===== LINHA ADICIONADA PARA A CORREÇÃO DE ACENTOS =====
-  client_encoding: 'utf8',
+});
+
+pool.on('connect', (client) => {
+  client.query(`SET client_encoding TO 'UTF8';`).catch(() => {});
 });
 
 module.exports = {

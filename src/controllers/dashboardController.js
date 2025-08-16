@@ -36,12 +36,14 @@ exports.getKpis = async (req, res) => {
         const clientesAtrasoWhere = addCondition(whereString, atrasoCondition);
         const clientesAtrasoQuery = await db.query(`SELECT emb.nome_principal AS cliente, COUNT(op.id) as contagem FROM operacoes op JOIN embarcadores emb ON op.embarcador_id = emb.id ${clientesAtrasoWhere} GROUP BY emb.nome_principal ORDER BY contagem DESC LIMIT 10`, filterParams);
 
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
         return res.status(200).json({
             kpis: { total_operacoes, operacoes_on_time: onTime, operacoes_atrasadas, percentual_atraso: percentual_atraso.toFixed(2) },
             grafico_ofensores: { labels: ofensoresQuery.rows.map(row => row.ofensor), data: ofensoresQuery.rows.map(row => row.contagem) },
             grafico_clientes_atraso: { labels: clientesAtrasoQuery.rows.map(row => row.cliente), data: clientesAtrasoQuery.rows.map(row => row.contagem) }
         });
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        
     } catch (error) {
         console.error('Erro ao buscar KPIs:', error);
         res.status(500).json({ message: 'Erro interno do servidor.' });

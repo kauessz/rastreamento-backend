@@ -1,5 +1,3 @@
-// Em: src/config/database.js (substitua tudo)
-
 const { Pool } = require('pg');
 require('dotenv').config();
 
@@ -14,11 +12,8 @@ const pool = new Pool({
   password: isProduction ? undefined : process.env.DB_PASSWORD,
   port: isProduction ? undefined : process.env.DB_PORT,
   ssl: isProduction ? { rejectUnauthorized: false } : false,
-
-  // ===== LINHA ADICIONADA PARA A CORREÇÃO =====
-  // Força a conexão a usar a codificação UTF-8 para lidar com acentos.
+  // ===== LINHA ADICIONADA PARA A CORREÇÃO DE ACENTOS =====
   client_encoding: 'utf8',
-  // ===========================================
 });
 
 module.exports = {

@@ -56,7 +56,13 @@ button { padding: 10px 15px; color: white; border: none; border-radius: 5px; cur
 .auth-form button:hover { background-color: #218838; }
 #uploadForm button { background-color: #17a2b8; }
 #uploadForm button:hover { background-color: #138496; }
-#searchButton, #filterButton { background-color: #007bff; }
+#searchButton, #filterButton, .button-danger  { background-color: #007bff; }
+.button-danger {
+    background-color: #dc3545 !important;
+}
+.button-danger:hover {
+    background-color: #c82333 !important;
+}
 #searchButton:hover, #filterButton:hover { background-color: #0056b3; }
 .button-logout { background-color: #dc3545; }
 .button-logout:hover { background-color: #c82333; }

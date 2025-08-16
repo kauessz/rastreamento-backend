@@ -93,6 +93,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // --- LÓGICA DO BOTÃO DE LIMPAR OPERAÇÕES ---
+    clearOperationsButton.addEventListener('click', async () => {
+        const firstConfirm = confirm("Tem certeza ABSOLUTA que deseja apagar TODAS as operações? Esta ação não pode ser desfeita.");
+        if (firstConfirm) {
+            const secondConfirm = confirm("Esta é sua última chance. Confirma a exclusão de TODOS os dados de operações?");
+            if (secondConfirm) {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/operations/all`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${currentToken}` },
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.message);
+                    alert(result.message);
+                    loadInitialData(); // Atualiza o dashboard
+                } catch (error) {
+                    alert(`Erro: ${error.message}`);
+                    console.error("Erro ao limpar operações:", error);
+                }
+            }
+        }
+    });
+
     async function populateEmbarcadorFilter() {
         try {
             const response = await fetch(`${API_BASE_URL}/api/embarcadores`, { headers: { 'Authorization': `Bearer ${currentToken}` } });

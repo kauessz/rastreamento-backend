@@ -26,6 +26,32 @@ app.use('/api/embarcadores', embarcadorRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/client', clientRoutes);
 
+// ✅ Webhook do Dialogflow (rota simples inline)
+app.post('/api/webhook/dialogflow', (req, res) => {
+  // (opcional) segurança por token: defina DF_TOKEN no Render e envie o mesmo no header x-dialogflow-token
+  const expected = process.env.DF_TOKEN;
+  if (expected) {
+    const got = req.get('x-dialogflow-token') || '';
+    if (got !== expected) {
+      return res.status(401).json({ fulfillmentText: 'Unauthorized' });
+    }
+  }
+
+  // pega o nome da intent
+  const intent = req.body?.queryResult?.intent?.displayName || '';
+
+  // teste rápido
+  if (intent === 'Ping') {
+    return res.json({ fulfillmentText: 'Webhook OK! ✅' });
+  }
+
+  // resposta padrão
+  return res.json({ fulfillmentText: `Recebi a intent: ${intent || 'desconhecida'}` });
+});
+
+// healthcheck opcional
+app.get('/healthz', (_req, res) => res.status(200).send('ok'));
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);

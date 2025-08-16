@@ -288,3 +288,21 @@ input:focus-visible, select:focus-visible{
   animation: shimmer 1.2s infinite;
 }
 @keyframes shimmer{ to{ transform: translateX(100%); } }
+
+df-messenger {
+    --df-messenger-font-color: #101828;
+    --df-messenger-button-titlebar-color: #1f6feb;
+    --df-messenger-chat-background-color: #ffffff;
+    --df-messenger-bot-message: #eef2ff;
+    --df-messenger-user-message: #e7f5ff;
+    --df-messenger-send-icon: #1f6feb;
+    z-index: 9999;
+  }
+  body.dark-mode df-messenger {
+    --df-messenger-font-color: #e5e7eb;
+    --df-messenger-button-titlebar-color: #3b82f6;
+    --df-messenger-chat-background-color: #0b1220;
+    --df-messenger-bot-message: #0f172a;
+    --df-messenger-user-message: #111827;
+    --df-messenger-send-icon: #93c5fd;
+  }

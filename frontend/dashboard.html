@@ -7,6 +7,7 @@
     <title>Dashboard - Rastreamento de Carga</title>
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://www.gstatic.com/dialogflow-console/fast/messenger/bootstrap.js?v=1"></script>
 </head>
 
 <body>
@@ -38,7 +39,8 @@
                         <button type="submit">Enviar</button>
                     </form>
                     <p id="uploadMessage"></p>
-                    <hr style="margin: 20px 0;"> <button id="clearOperationsButton" class="button-danger">Limpar Todas as Operações</button>
+                    <hr style="margin: 20px 0;"> <button id="clearOperationsButton" class="button-danger">Limpar Todas
+                        as Operações</button>
                 </div>
                 <div class="management-box">
                     <h3>Usuários Pendentes</h3>
@@ -140,6 +142,35 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
     <script src="js/firebase-init.js"></script>
     <script src="js/dashboard.js"></script>
+    <!-- Chat do Assistente (Dialogflow Messenger) -->
+    <df-messenger chat-icon="https://fonts.gstatic.com/s/i/materialiconsoutlined/smart_toy/v12/24px.svg"
+        chat-title="Assistente de Rastreamento" agent-id="AGENT_ID_AQUI" language-code="pt-br" expand="false">
+    </df-messenger>
+
+    <script>
+        // Se tiver email do usuário (Firebase), use como session-id pra manter contexto
+        (function attachSessionId() {
+            const df = document.querySelector('df-messenger');
+            // aguarda auth do Firebase colocar #userEmail
+            const trySet = () => {
+                const el = document.getElementById('userEmail');
+                const email = el && el.textContent ? el.textContent.replace('Olá, ', '') : null;
+                if (email && df && !df.getAttribute('session-id')) {
+                    df.setAttribute('session-id', email);
+                } else {
+                    setTimeout(trySet, 1000);
+                }
+            };
+            trySet();
+        })();
+
+        // Helper: abrir o chat programaticamente
+        window.openAssistant = function () {
+            const df = document.querySelector('df-messenger');
+            if (df) df.setAttribute('expanded', 'true');
+        };
+    </script>
+
 </body>
 
 </html>

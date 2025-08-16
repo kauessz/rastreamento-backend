@@ -54,7 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelector('#kpi-ontime .kpi-value').textContent = kpis.operacoes_on_time;
             document.querySelector('#kpi-atrasadas .kpi-value').textContent = kpis.operacoes_atrasadas;
             document.querySelector('#kpi-percentual .kpi-value').textContent = `${kpis.percentual_atraso}%`;
-        } catch(error) {
+        } catch (error) {
             console.error("Erro ao buscar KPIs do cliente:", error);
         }
     }
@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${formatarData(op.dt_inicio_execucao)}</td>
                 <td>${formatarData(op.dt_fim_execucao)}</td>
             `;
-            
+
             const detailsRow = document.createElement('tr');
             detailsRow.classList.add('details-row');
             detailsRow.id = `details-${op.id}`;
@@ -111,6 +111,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span><strong>Motorista:</strong> ${op.nome_motorista || 'N/A'}</span>
                 <span><strong>Veículo:</strong> ${op.placa_veiculo || 'N/A'}</span>
                 <span><strong>Carreta:</strong> ${op.placa_carreta || 'N/A'}</span>
+                <button class="ask-assistant"
+                    data-query="status do ${op.containers ? 'container ' + op.containers : 'booking ' + (op.booking || '')}">
+                    Perguntar ao Assistente
+                </button>
             </div></td>`;
 
             tableBody.append(mainRow, detailsRow);
@@ -125,6 +129,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (detailsRow) detailsRow.classList.toggle('visible');
         }
     });
+
+    document.body.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.ask-assistant');
+        if (!btn) return;
+        const q = btn.dataset.query || 'ajuda';
+        try { await navigator.clipboard.writeText(q); } catch (_) { }
+        window.openAssistant && window.openAssistant();
+        alert('Abri o assistente. Cole a pergunta no campo e envie:\n\n' + q);
+    });
+
 
     function renderPaginationControls(pagination, filters) {
         paginationControls.innerHTML = '';
@@ -141,7 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
         pageInfo.textContent = `Página ${pagination.currentPage} de ${pagination.totalPages}`;
         paginationControls.append(prevButton, pageInfo, nextButton);
     }
-    
+
     function applyClientFilters() {
         const filters = {
             booking: bookingFilter.value.trim(),

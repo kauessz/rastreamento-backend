@@ -287,6 +287,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <span><strong>Motorista:</strong> ${op.nome_motorista || 'N/A'}</span>
             <span><strong>Veículo:</strong> ${op.placa_veiculo || 'N/A'}</span>
             <span><strong>Carreta:</strong> ${op.placa_carreta || 'N/A'}</span>
+            <button class="ask-assistant"
+                data-query="status do ${op.containers ? 'container ' + op.containers : 'booking ' + (op.booking || '')}">
+                Perguntar ao Assistente
+            </button>
         </div></td>`;
             operationsTableBody.append(mainRow, detailsRow);
         });
@@ -315,6 +319,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (detailsRow) detailsRow.classList.toggle('visible');
         }
     });
+
+    document.body.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.ask-assistant');
+        if (!btn) return;
+        const q = btn.dataset.query || 'ajuda';
+        try {
+            await navigator.clipboard.writeText(q);
+        } catch (_) { }
+        window.openAssistant && window.openAssistant();
+        alert('Abri o assistente. Cole a pergunta no campo e envie:\n\n' + q);
+    });
+
 
     operationsTableHead.addEventListener('click', (event) => {
         const headerCell = event.target.closest('th');

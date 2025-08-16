@@ -26,7 +26,7 @@ app.use('/api/embarcadores', embarcadorRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/client', clientRoutes);
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });

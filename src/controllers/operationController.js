@@ -7,7 +7,6 @@ const csv = require('csv-parser');
 const { parse, isValid } = require('date-fns');
 const db = require('../config/database');
 const chardet = require('chardet');
-const detected = chardet.detectFileSync(filePath) || 'UTF-8';
 
 
 // -----------------------------------------------------------------------------------------

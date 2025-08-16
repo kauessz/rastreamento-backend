@@ -150,3 +150,141 @@ input:checked + .slider:before { transform: translateX(20px); }
 .button-reassign:hover {
     background-color: #0056b3;
 }
+
+/* Extras de tema e motion */
+:root{
+  --brand-1: #3b82f6; /* azul */
+  --brand-2: #a855f7; /* roxo */
+  --brand-acc: #22c55e; /* verde */
+  --elev: 0 2px 12px rgba(0,0,0,.06);
+  --elev-hover: 0 12px 32px rgba(0,0,0,.12);
+  --t-fast: .18s ease;
+  --t-slow: .35s cubic-bezier(.2,.8,.2,1);
+}
+body.dark-mode{
+  --elev: 0 2px 16px rgba(0,0,0,.45);
+  --elev-hover: 0 14px 40px rgba(0,0,0,.6);
+}
+
+/* Header vítreo + gradiente sutil */
+header{
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--cor-container) 92%, transparent), var(--cor-container));
+  backdrop-filter: saturate(140%) blur(8px);
+  border-bottom: 1px solid color-mix(in oklab, var(--cor-borda-input) 80%, transparent);
+}
+.logo{
+  background: linear-gradient(90deg, var(--cor-titulo), var(--brand-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* Cards/sections com elevação e hover */
+.dashboard-section,
+.kpi-card,
+.chart-container{
+  border: 1px solid var(--cor-card-borda);
+  box-shadow: var(--elev);
+  transition: box-shadow var(--t-slow), transform var(--t-fast), border-color var(--t-fast), background-color var(--t-fast);
+}
+.dashboard-section:hover,
+.kpi-card:hover,
+.chart-container:hover{
+  transform: translateY(-3px);
+  box-shadow: var(--elev-hover);
+  border-color: color-mix(in oklab, var(--cor-card-borda-destaque) 45%, var(--cor-card-borda));
+}
+
+/* KPI com faixa animada */
+.kpi-card{
+  position: relative; overflow: hidden;
+}
+.kpi-card::before{
+  content: ""; position: absolute; inset: 0 0 0 auto; width: 6px;
+  background: linear-gradient(180deg, var(--brand-1), var(--brand-2));
+  opacity: .85; transition: width var(--t-slow);
+}
+.kpi-card:hover::before{ width: 8px; }
+
+/* Botões: foco e micro-animations (sem quebrar variantes existentes) */
+:where(button):not(.button-danger):not(.button-secondary):not(.button-logout),
+.button-link{
+  background: linear-gradient(135deg, var(--cor-titulo), var(--cor-card-borda-destaque));
+  box-shadow: 0 6px 18px rgba(0,0,0,.12);
+  transition: transform var(--t-fast), box-shadow var(--t-fast), filter var(--t-fast), opacity var(--t-fast);
+}
+:where(button):not(.button-danger):not(.button-secondary):not(.button-logout):hover,
+.button-link:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(0,0,0,.18);
+  filter: saturate(105%);
+}
+button:active{ transform: translateY(0); box-shadow: 0 4px 12px rgba(0,0,0,.14); }
+button:focus-visible{
+  outline: 3px solid color-mix(in oklab, var(--cor-card-borda-destaque) 65%, transparent);
+  outline-offset: 2px;
+}
+
+/* Tabela com hover moderninho e cabeçalho “sticky” opcional */
+.operations-table thead th{
+  position: sticky; top: 0; z-index: 1;
+  background: linear-gradient(180deg, var(--cor-card-fundo), color-mix(in oklab, var(--cor-card-fundo) 80%, transparent));
+}
+.operations-table tbody tr.main-row{
+  transition: background-color var(--t-fast), transform var(--t-fast);
+}
+.operations-table tbody tr.main-row:hover{
+  background-color: color-mix(in oklab, var(--cor-card-fundo) 70%, transparent);
+}
+
+/* Gráficos (container) */
+.chart-container{
+  border-radius: 12px;
+}
+
+/* Chips/badges rápidas (use <span class="chip success">texto</span>) */
+.chip{
+  display: inline-flex; align-items: center; gap: .35rem;
+  padding: .25rem .6rem; border-radius: 999px; font-weight: 600; font-size: 12px;
+  background: color-mix(in oklab, var(--cor-card-fundo) 85%, transparent);
+  border: 1px solid var(--cor-card-borda);
+}
+.chip.success{ color: var(--brand-acc); border-color: color-mix(in oklab, var(--brand-acc) 65%, var(--cor-card-borda)); }
+.chip.info{ color: var(--brand-1); border-color: color-mix(in oklab, var(--brand-1) 65%, var(--cor-card-borda)); }
+
+/* Switch de tema – toque mais fluido */
+.slider{ box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+input:checked + .slider{ filter: saturate(110%); }
+.slider:before{ will-change: transform; }
+
+/* Entradas com foco realçado */
+input[type="text"], input[type="email"], input[type="password"], input[type="date"], select{
+  transition: border-color var(--t-fast), background-color var(--t-fast), box-shadow var(--t-fast);
+}
+input:focus-visible, select:focus-visible{
+  outline: none;
+  border-color: color-mix(in oklab, var(--cor-card-borda-destaque) 60%, var(--cor-borda-input));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--cor-card-borda-destaque) 25%, transparent);
+}
+
+/* Fade-in utilitário (adicione classe .fade-in aos elementos que quiser animar) */
+@media (prefers-reduced-motion: no-preference){
+  .fade-in{
+    animation: fadeIn var(--t-slow) both;
+  }
+  @keyframes fadeIn{
+    from{ opacity: 0; transform: translateY(6px); }
+    to{ opacity: 1; transform: none; }
+  }
+}
+
+/* Skeleton utilitário (adicione .skeleton a um bloco enquanto carrega) */
+.skeleton{
+  position: relative; overflow: hidden;
+  background: color-mix(in oklab, var(--cor-card-fundo) 70%, transparent);
+}
+.skeleton::after{
+  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--cor-container) 55%, transparent), transparent);
+  animation: shimmer 1.2s infinite;
+}
+@keyframes shimmer{ to{ transform: translateX(100%); } }

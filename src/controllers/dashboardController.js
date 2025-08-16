@@ -41,6 +41,7 @@ exports.getKpis = async (req, res) => {
             grafico_ofensores: { labels: ofensoresQuery.rows.map(row => row.ofensor), data: ofensoresQuery.rows.map(row => row.contagem) },
             grafico_clientes_atraso: { labels: clientesAtrasoQuery.rows.map(row => row.cliente), data: clientesAtrasoQuery.rows.map(row => row.contagem) }
         });
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
     } catch (error) {
         console.error('Erro ao buscar KPIs:', error);
         res.status(500).json({ message: 'Erro interno do servidor.' });

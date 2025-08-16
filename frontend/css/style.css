@@ -115,7 +115,7 @@ body.dark-mode #paginationControls button:hover:not(:disabled) { background-colo
 #kpi-ontime { border-left-color: #28a745; } #kpi-ontime .kpi-value { color: #28a745; }
 #kpi-atrasadas { border-left-color: #dc3545; } #kpi-atrasadas .kpi-value { color: #dc3545; }
 #kpi-percentual { border-left-color: #6c757d; } #kpi-percentual .kpi-value { color: #6c757d; }
-.charts-wrapper { display: flex; gap: 20px; margin-top: 20px; flex-wrap: wrap; padding-bottom: 5px; }
+.charts-wrapper { display: flex; gap: 20px; margin-top: 20px; flex-wrap: wrap; }
 .chart-container { flex: 1; min-width: 400px; background-color: var(--cor-container); padding: 30px; border-radius: 8px; position: relative; height: 400px; }
 #pendingUsersList ul { list-style: none; padding: 0; }
 #pendingUsersList li { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid var(--cor-card-borda); }
@@ -126,33 +126,13 @@ body.dark-mode #paginationControls button:hover:not(:disabled) { background-colo
 input:checked + .slider { background-color: #58a6ff; }
 input:checked + .slider:before { transform: translateX(20px); }
 .button-link {
-    display: inline-block;
-    padding: 8px 15px;
-    background-color: #007bff;
-    color: white;
-    text-decoration: none;
-    border-radius: 5px;
-    font-size: 14px;
-    font-weight: bold;
-    transition: background-color 0.3s;
+    display: inline-block; padding: 8px 15px; background-color: #007bff;
+    color: white; text-decoration: none; border-radius: 5px;
+    font-size: 14px; font-weight: bold; transition: background-color 0.3s;
 }
-.button-link:hover {
-    background-color: #0056b3;
-}
-
-.button-danger {
-    background-color: #dc3545;
-    width: 100%; /* Para ocupar a largura da caixa */
-}
-.button-danger:hover {
-    background-color: #c82333;
-}
-
+.button-link:hover { background-color: #0056b3; }
 .result-card {
-    background-color: var(--cor-card-fundo);
-    border: 1px solid var(--cor-card-borda);
-    border-left: 5px solid var(--cor-card-borda-destaque);
-    padding: 20px;
-    margin-bottom: 15px; /* <-- Esta linha é a chave para separar os cards */
-    border-radius: 5px;
+    background-color: var(--cor-card-fundo); border: 1px solid var(--cor-card-borda);
+    border-left: 5px solid var(--cor-card-borda-destaque); padding: 20px;
+    margin-bottom: 15px; border-radius: 5px;
 }

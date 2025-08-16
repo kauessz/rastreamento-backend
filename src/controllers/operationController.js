@@ -7,9 +7,8 @@ const csv = require('csv-parser');
 const { parse, isValid } = require('date-fns');
 const db = require('../config/database');
 const chardet = require('chardet');
-const enc = chardet.detectFileSync(filePath) || 'UTF-8';
-const iconv = require('iconv-lite');
-const isLatin = /1252|ISO-8859-1|latin-1|latin1/i.test(enc);
+const detected = chardet.detectFileSync(filePath) || 'UTF-8';
+
 
 // -----------------------------------------------------------------------------------------
 // FUNÇÃO DE PADRONIZAÇÃO DE NOMES ("GERENTE INTERNO")
@@ -85,6 +84,8 @@ exports.uploadOperations = async (req, res) => {
   const results = [];
   const filePath = req.file.path;
   const client = await db.pool.connect();
+  try { detected = chardet.detectFileSync(filePath) || 'UTF-8'; } catch (_) {}
+  const isLatin = /1252|ISO-8859-1|latin-1|latin1/i.test(detected);
 
   const parseDate = (dateString) => {
     if (!dateString || dateString.trim() === '') return null;
@@ -111,7 +112,6 @@ exports.uploadOperations = async (req, res) => {
     .pipe(iconv.decodeStream(isLatin ? 'latin1' : 'utf8'))
     .pipe(csv({ separator: ';', headers: csvHeaders, skipLines: 1 }))
     .on('data', (data) => results.push(data))
-    .on('data', handleRow)
     .on('end', async () => {
       let processedCount = 0;
       let skippedCount = 0;

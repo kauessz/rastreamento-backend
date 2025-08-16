@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
     <header>
         <div class="logo">Dashboard Admin</div>
@@ -36,7 +38,8 @@
                         <button type="submit">Enviar</button>
                     </form>
                     <p id="uploadMessage"></p>
-                    <hr style="margin: 20px 0;"> <button id="clearOperationsButton" class="button-danger">Limpar Todas as Operações</button>
+                    <hr style="margin: 20px 0;"> <button id="clearOperationsButton" class="button-danger">Limpar Todas
+                        as Operações</button>
                 </div>
                 <div class="management-box">
                     <h3>Usuários Pendentes</h3>
@@ -46,16 +49,38 @@
         </section>
 
         <section class="dashboard-section">
+            <h2>Gerenciador de Apelidos de Embarcadores</h2>
+            <p>Use esta ferramenta para garantir que variações de nomes (ex: "Ambev S.A.") sejam associadas ao cliente
+                mestre correto (ex: "AMBEV").</p>
+            <div class="table-wrapper">
+                <table id="aliasesTable" class="operations-table">
+                    <thead>
+                        <tr>
+                            <th>Nome "Sujo" (Apelido)</th>
+                            <th>Associado ao Mestre</th>
+                            <th>Reassociar Para</th>
+                            <th>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="dashboard-section">
             <h2>Filtros de Operações</h2>
             <div class="filters" id="globalFilters">
-                <select id="embarcadorFilter"><option value="">Todos Embarcadores</option></select>
+                <select id="embarcadorFilter">
+                    <option value="">Todos Embarcadores</option>
+                </select>
                 <input type="text" id="bookingFilter" placeholder="Filtrar por Booking...">
                 <input type="date" id="dataPrevisaoFilter" title="Filtrar por data de previsão">
                 <button id="filterButton">Filtrar</button>
                 <button id="clearFilterButton" class="button-secondary">Limpar Filtros</button>
             </div>
         </section>
-        
+
         <section class="dashboard-section">
             <h2>Visão Geral das Operações</h2>
             <div class="kpi-container">
@@ -87,7 +112,7 @@
                 </div>
             </div>
         </section>
-        
+
         <section class="dashboard-section">
             <h2>Lista de Operações</h2>
             <div class="table-wrapper">
@@ -117,4 +142,5 @@
     <script src="js/firebase-init.js"></script>
     <script src="js/dashboard.js"></script>
 </body>
+
 </html>

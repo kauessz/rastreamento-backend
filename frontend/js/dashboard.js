@@ -360,4 +360,127 @@ document.addEventListener('DOMContentLoaded', () => {
             alert(error.message);
         }
     }
+
+    // --- 8. LÓGICA DO GERENCIADOR DE APELIDOS ---
+    const aliasesTableBody = document.querySelector('#aliasesTable tbody');
+    let masterEmbarcadoresList = []; // Para guardar a lista de mestres
+
+    // Função para buscar e renderizar a lista de apelidos
+    async function fetchAndRenderAliases() {
+        if (!currentToken) return;
+        aliasesTableBody.innerHTML = `<tr><td colspan="4">Carregando apelidos...</td></tr>`;
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/embarcadores/aliases`, {
+                headers: { 'Authorization': `Bearer ${currentToken}` }
+            });
+            if (!response.ok) throw new Error((await response.json()).message);
+            const aliases = await response.json();
+            renderAliasesTable(aliases);
+        } catch (error) {
+            console.error("Erro ao buscar apelidos:", error);
+            aliasesTableBody.innerHTML = `<tr><td colspan="4" style="color: red;">${error.message}</td></tr>`;
+        }
+    }
+
+    // Função para desenhar a tabela de apelidos
+    function renderAliasesTable(aliases) {
+        aliasesTableBody.innerHTML = '';
+        if (aliases.length === 0) {
+            aliasesTableBody.innerHTML = `<tr><td colspan="4">Nenhum apelido encontrado.</td></tr>`;
+            return;
+        }
+
+        // Cria o HTML do menu dropdown com os mestres uma vez
+        const masterOptions = masterEmbarcadoresList.map(master => 
+            `<option value="${master.id}">${master.nome_principal}</option>`
+        ).join('');
+
+        aliases.forEach(alias => {
+            const row = document.createElement('tr');
+            row.dataset.aliasId = alias.id;
+            row.innerHTML = `
+                <td>${alias.nome_alias}</td>
+                <td>${alias.mestre_nome}</td>
+                <td>
+                    <select class="reassign-select">
+                        <option value="">Selecione um novo mestre...</option>
+                        ${masterOptions}
+                    </select>
+                </td>
+                <td>
+                    <button class="button-reassign">Salvar</button>
+                    <button class="button-delete-alias button-secondary">Excluir</button>
+                </td>
+            `;
+            aliasesTableBody.appendChild(row);
+        });
+    }
+
+    // Adiciona um "ouvinte" de eventos na tabela de apelidos para os botões
+    aliasesTableBody.addEventListener('click', async (event) => {
+        const aliasId = event.target.closest('tr').dataset.aliasId;
+        
+        // Lógica para o botão de Reassociar/Salvar
+        if (event.target.classList.contains('button-reassign')) {
+            const selectElement = event.target.closest('tr').querySelector('.reassign-select');
+            const newMasterId = selectElement.value;
+            if (!newMasterId) {
+                alert('Por favor, selecione um novo mestre para reassociar.');
+                return;
+            }
+            if (confirm(`Tem certeza que deseja associar este apelido ao novo mestre selecionado?`)) {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/embarcadores/aliases/${aliasId}/reassign`, {
+                        method: 'PUT',
+                        headers: { 'Authorization': `Bearer ${currentToken}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ newMasterId: newMasterId })
+                    });
+                    if (!response.ok) throw new Error((await response.json()).message);
+                    alert('Apelido reassociado com sucesso!');
+                    fetchAndRenderAliases(); // Atualiza a tabela
+                } catch (error) {
+                    alert(`Erro: ${error.message}`);
+                }
+            }
+        }
+
+        // Lógica para o botão de Excluir
+        if (event.target.classList.contains('button-delete-alias')) {
+            if (confirm(`Tem certeza que deseja EXCLUIR este apelido? Esta ação não pode ser desfeita.`)) {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/embarcadores/aliases/${aliasId}`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${currentToken}` }
+                    });
+                    if (!response.ok) throw new Error((await response.json()).message);
+                    alert('Apelido excluído com sucesso!');
+                    fetchAndRenderAliases(); // Atualiza a tabela
+                } catch (error) {
+                    alert(`Erro: ${error.message}`);
+                }
+            }
+        }
+    });
+
+    // Modifica a função populateEmbarcadorFilter para guardar a lista de mestres
+    async function populateEmbarcadorFilter() {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/embarcadores`, { headers: { 'Authorization': `Bearer ${currentToken}` } });
+            if (!response.ok) throw new Error('Falha ao buscar embarcadores.');
+            const embarcadores = await response.json();
+            masterEmbarcadoresList = embarcadores; // <-- Guarda a lista para usar no gerenciador
+
+            embarcadorFilter.innerHTML = '<option value="">Todos Embarcadores</option>';
+            embarcadores.forEach(emb => {
+                const option = document.createElement('option');
+                option.value = emb.id;
+                option.textContent = emb.nome_principal;
+                embarcadorFilter.appendChild(option);
+            });
+            
+            // Após carregar os mestres, carrega os apelidos
+            fetchAndRenderAliases();
+            
+        } catch (error) { console.error(error); }
+    }
 });

@@ -99,3 +99,45 @@ exports.getMyKpis = async (req, res) => {
         res.status(500).json({ message: 'Erro interno do servidor.' });
     }
 };
+
+// Perfil do cliente logado: devolve embarcador_id e dados básicos
+exports.getMyProfile = async (req, res) => {
+  try {
+    const uid = req.user?.uid; // vem do authMiddleware (Firebase)
+    if (!uid) return res.status(401).json({ message: 'Não autenticado.' });
+
+    const sql = `
+      SELECT 
+        u.id, u.nome, u.email, u.role, u.status, u.embarcador_id,
+        e.nome_principal AS embarcador_nome
+      FROM usuarios u
+      LEFT JOIN embarcadores e ON e.id = u.embarcador_id
+      WHERE u.firebase_uid = $1
+      LIMIT 1;
+    `;
+    const { rows } = await db.query(sql, [uid]);
+
+    if (!rows.length) {
+      return res.status(404).json({ message: 'Perfil não encontrado.' });
+    }
+
+    const u = rows[0];
+
+    // regra de acesso (mesma ideia usada no restante do controller)
+    if (u.status !== 'ativo' || u.role !== 'embarcador' || !u.embarcador_id) {
+      return res.status(403).json({ message: 'Acesso negado para este perfil.' });
+    }
+
+    return res.status(200).json({
+      uid,
+      nome: u.nome,
+      email: u.email,
+      role: u.role,
+      embarcador_id: u.embarcador_id,
+      embarcador_nome: u.embarcador_nome || null
+    });
+  } catch (err) {
+    console.error('Erro em getMyProfile:', err);
+    return res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
+};

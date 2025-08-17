@@ -26,6 +26,24 @@
             --df-messenger-user-message: #111827;
             --df-messenger-send-icon: #93c5fd;
         }
+
+        .btn {
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid #d0d7de;
+            background: #f6f8fa;
+            cursor: pointer
+        }
+
+        body.dark-mode .btn {
+            background: #0b1220;
+            border-color: #1f2937;
+            color: #e5e7eb
+        }
+
+        .btn:hover {
+            filter: brightness(0.98);
+        }
     </style>
 </head>
 
@@ -69,6 +87,14 @@
                 <input type="date" id="dataPrevisaoFilter">
                 <button id="filterButton">Filtrar</button>
                 <button id="clearFilterButton" class="button-secondary">Limpar</button>
+            </div>
+            <!-- Barra de Relatórios (Cliente) -->
+            <div class="report-bar" style="display:flex; gap:.5rem; align-items:center; margin:12px 0;">
+                <label>Período:</label>
+                <input type="date" id="repStartClient" />
+                <input type="date" id="repEndClient" />
+                <button id="btnExcelTopClient" class="btn">Top 10 (Excel)</button>
+                <button id="btnExcelAtrasosClient" class="btn">Resumo de Atrasos (Excel)</button>
             </div>
             <div class="table-wrapper">
                 <table id="clientOperationsTable" class="operations-table">

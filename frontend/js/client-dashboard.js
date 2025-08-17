@@ -1,185 +1,287 @@
-// Em: frontend/js/client-dashboard.js (substitua tudo)
+// ===============================
+// client-dashboard.js — Portal do Cliente (versão completa)
+// ===============================
+// - Dark mode
+// - Login Firebase
+// - KPIs + Tabela com filtros e paginação
+// - Integração com Assistente (Dialogflow Messenger):
+//   * Define session-id no HTML como client:<companyId>:<email>
+//   * Este JS preenche window.CLIENT_COMPANY_ID e window.AUTH_EMAIL
+// - Botões para baixar Excel: Top 10 e Resumo de Atrasos
+//
+// Backend alvo
+const API_BASE_URL = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
+const PAGE_SIZE = 10;
 
-// Lógica do Dark Mode
+// ====== DARK MODE ======
 const themeToggle = document.getElementById('checkbox');
 const body = document.body;
 const savedTheme = localStorage.getItem('theme');
 if (savedTheme) {
-    body.classList.add(savedTheme);
-    if (savedTheme === 'dark-mode') themeToggle.checked = true;
+  body.classList.add(savedTheme);
+  if (savedTheme === 'dark-mode' && themeToggle) themeToggle.checked = true;
 }
-themeToggle.addEventListener('change', () => {
+if (themeToggle) {
+  themeToggle.addEventListener('change', () => {
     body.classList.toggle('dark-mode');
     localStorage.setItem('theme', body.classList.contains('dark-mode') ? 'dark-mode' : 'light-mode');
+  });
+}
+
+// ====== ELEMENTOS ======
+const userEmailEl = document.getElementById('userEmail');
+const kpiTotalEl = document.getElementById('kpiTotal');
+const kpiOnTimeEl = document.getElementById('kpiOnTime');
+const kpiLateEl = document.getElementById('kpiLate');
+const kpiLatePctEl = document.getElementById('kpiLatePct');
+
+const bookingFilter = document.getElementById('bookingFilter');
+const dataPrevisaoFilter = document.getElementById('dataPrevisaoFilter');
+const filterButton = document.getElementById('filterButton');
+const clearFilterButton = document.getElementById('clearFilterButton');
+
+const tableEl = document.querySelector('#operationsTable') || document.querySelector('table');
+const tableBodyEl = tableEl ? tableEl.querySelector('tbody') : null;
+const paginationEl = document.getElementById('paginationControls') || document.getElementById('pagination');
+
+// ====== ESTADO ======
+let currentUser = null;
+let currentToken = null;
+let currentPage = 1;
+let currentFilters = { booking: '', data_previsao: '' };
+
+// Expostos globalmente p/ HTML do df-messenger
+window.CLIENT_COMPANY_ID = window.CLIENT_COMPANY_ID || 0; // será preenchido por /api/client/profile
+window.AUTH_EMAIL = window.AUTH_EMAIL || '';
+
+// ====== UTILS ======
+function fmtDateBR(iso) { try { return new Date(iso).toLocaleString('pt-BR'); } catch { return iso || '—'; } }
+function safeText(v) { return (v === null || v === undefined || v === '') ? 'N/A' : String(v); }
+function qs(obj) { const p = new URLSearchParams(); Object.entries(obj).forEach(([k,v]) => (v!==undefined&&v!==null&&v!=='') && p.append(k,v)); return p.toString(); }
+function todayISO(d = new Date()) { return d.toISOString().slice(0,10); }
+function defaultPeriod() { const end = new Date(); const start = new Date(Date.now() - 30*864e5); return { start: todayISO(start), end: todayISO(end) }; }
+
+async function apiGet(path, withAuth = true) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (withAuth && currentToken) headers['Authorization'] = `Bearer ${currentToken}`;
+  const resp = await fetch(`${API_BASE_URL}${path}`, { headers });
+  if (!resp.ok) throw new Error((await resp.text()) || `HTTP ${resp.status}`);
+  return resp.json();
+}
+
+// ====== FIREBASE AUTH ======
+firebase.auth().onAuthStateChanged(async (user) => {
+  if (!user) { window.location.href = 'login.html'; return; }
+  currentUser = user;
+  if (userEmailEl) userEmailEl.textContent = `Olá, ${user.email}`;
+  window.AUTH_EMAIL = user.email; // usado pelo df-messenger no HTML
+
+  try { currentToken = await user.getIdToken(); }
+  catch (e) { console.error('Erro ao obter token:', e); window.location.href = 'login.html'; return; }
+
+  // Descobre o companyId do cliente (preenche window.CLIENT_COMPANY_ID)
+  await resolveClientCompanyId();
+
+  // Preenche período padrão nos inputs (se existirem)
+  const def = defaultPeriod();
+  document.getElementById('repStartClient')?.setAttribute('value', def.start);
+  document.getElementById('repEndClient')?.setAttribute('value', def.end);
+
+  // Vincula botões de Excel
+  bindClientReportButtons();
+
+  // Carrega KPIs e tabela
+  await fetchClientKpis();
+  await fetchClientOperations(1, currentFilters);
 });
 
-document.addEventListener('DOMContentLoaded', () => {
-    const userEmail = document.getElementById('userEmail');
-    const logoutButton = document.getElementById('logoutButton');
-    const tableBody = document.querySelector('#clientOperationsTable tbody');
-    const paginationControls = document.getElementById('paginationControls');
-    const filterButton = document.getElementById('filterButton');
-    const clearFilterButton = document.getElementById('clearFilterButton');
-    const bookingFilter = document.getElementById('bookingFilter');
-    const dataPrevisaoFilter = document.getElementById('dataPrevisaoFilter');
+async function resolveClientCompanyId() {
+  // 1) Se já está definido no HTML, respeita
+  if (Number(window.CLIENT_COMPANY_ID) > 0) return;
 
-    let currentToken = null;
-
-    auth.onAuthStateChanged(async (user) => {
-        if (user) {
-            userEmail.textContent = `Olá, ${user.email}`;
-            try {
-                currentToken = await user.getIdToken();
-                try {
-                    const resp = await fetch('http://localhost:3001/api/client/profile', {
-                        headers: { 'Authorization': `Bearer ${currentToken}` }
-                    });
-                    if (resp.ok) {
-                        const profile = await resp.json();
-                        // ajuste o nome do campo conforme seu backend (ex.: profile.embarcador_id)
-                        window.CLIENT_COMPANY_ID = profile.embarcador_id || profile.companyId || window.CLIENT_COMPANY_ID;
-                        window.AUTH_EMAIL = user.email; // para o script do df-messenger
-                    }
-                } catch (e) { console.warn('Falha ao buscar perfil do cliente:', e); }
-                
-                fetchClientKpis();
-                fetchClientOperations();
-            } catch (error) {
-                console.error("Erro ao obter token:", error);
-                window.location.href = 'login.html';
-            }
-        } else {
-            window.location.href = 'login.html';
-        }
-    });
-
-    logoutButton.addEventListener('click', () => auth.signOut());
-
-    async function fetchClientKpis() {
-        try {
-            const response = await fetch('http://localhost:3001/api/client/kpis', {
-                headers: { 'Authorization': `Bearer ${currentToken}` }
-            });
-            if (!response.ok) throw new Error('Falha ao buscar KPIs.');
-            const kpis = await response.json();
-            document.querySelector('#kpi-total .kpi-value').textContent = kpis.total_operacoes;
-            document.querySelector('#kpi-ontime .kpi-value').textContent = kpis.operacoes_on_time;
-            document.querySelector('#kpi-atrasadas .kpi-value').textContent = kpis.operacoes_atrasadas;
-            document.querySelector('#kpi-percentual .kpi-value').textContent = `${kpis.percentual_atraso}%`;
-        } catch (error) {
-            console.error("Erro ao buscar KPIs do cliente:", error);
-        }
+  // 2) Busca do backend (requer authMiddleware no servidor)
+  try {
+    const profile = await apiGet('/api/client/profile'); // { embarcador_id, email, ... }
+    if (profile && Number(profile.embarcador_id) > 0) {
+      window.CLIENT_COMPANY_ID = Number(profile.embarcador_id);
+      // opcional: sincroniza email
+      if (!window.AUTH_EMAIL && profile.email) window.AUTH_EMAIL = profile.email;
+      return;
     }
+  } catch (e) {
+    console.warn('Endpoint /api/client/profile indisponível:', e);
+  }
 
-    async function fetchClientOperations(page = 1, filters = {}) {
-        tableBody.innerHTML = `<tr><td colspan="6">Carregando suas operações...</td></tr>`;
-        let url = new URL('http://localhost:3001/api/client/operations');
-        url.searchParams.append('page', page);
-        url.searchParams.append('limit', 20);
-        if (filters.booking) url.searchParams.append('booking', filters.booking);
-        if (filters.data_previsao) url.searchParams.append('data_previsao', filters.data_previsao);
+  // 3) Sem companyId, mantém 0 (assistente não filtrará por empresa). Defina via HTML se precisar.
+  console.warn('CLIENT_COMPANY_ID indefinido. Defina no HTML ou exponha /api/client/profile.');
+}
 
-        try {
-            const response = await fetch(url.toString(), {
-                headers: { 'Authorization': `Bearer ${currentToken}` }
-            });
-            if (!response.ok) { throw new Error((await response.json()).message); }
-            const result = await response.json();
-            renderTable(result.data);
-            renderPaginationControls(result.pagination, filters);
-        } catch (error) {
-            console.error("Erro ao buscar operações do cliente:", error);
-            tableBody.innerHTML = `<tr><td colspan="6" style="color: red;">${error.message}</td></tr>`;
-        }
-    }
+// ====== KPIs ======
+async function fetchClientKpis() {
+  try {
+    const data = await apiGet(`/api/client/kpis`);
+    if (kpiTotalEl) kpiTotalEl.textContent = safeText(data.total_operacoes);
+    if (kpiOnTimeEl) kpiOnTimeEl.textContent = safeText(data.operacoes_on_time);
+    if (kpiLateEl) kpiLateEl.textContent = safeText(data.operacoes_atrasadas);
+    if (kpiLatePctEl) kpiLatePctEl.textContent = (data.percentual_atraso !== undefined ? `${data.percentual_atraso}%` : '—');
+  } catch (e) { console.error('Erro ao buscar KPIs:', e); }
+}
 
-    function renderTable(operations) {
-        tableBody.innerHTML = '';
-        if (operations.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan="6">Nenhuma operação encontrada para sua conta.</td></tr>`;
-            return;
-        }
-        const formatarData = (data) => data ? new Date(data).toLocaleString('pt-BR') : 'N/A';
-        operations.forEach(op => {
-            const mainRow = document.createElement('tr');
-            mainRow.classList.add('main-row');
-            mainRow.style.cursor = 'pointer';
-            mainRow.dataset.operationId = op.id; // Usa o ID da operação
-            mainRow.innerHTML = `
-                <td>${op.booking || 'N/A'}</td>
-                <td>${op.containers || 'N/A'}</td>
-                <td>${op.status_operacao || 'N/A'}</td>
-                <td>${formatarData(op.previsao_inicio_atendimento)}</td>
-                <td>${formatarData(op.dt_inicio_execucao)}</td>
-                <td>${formatarData(op.dt_fim_execucao)}</td>
-            `;
+// ====== TABELA ======
+async function fetchClientOperations(page = 1, filters = {}) {
+  currentPage = page;
+  currentFilters = { booking: (filters.booking || '').trim(), data_previsao: (filters.data_previsao || '').trim() };
+  const query = qs({ page, pageSize: PAGE_SIZE, ...currentFilters });
+  try {
+    const payload = await apiGet(`/api/client/operations?${query}`);
+    const list = payload.items || payload.rows || payload.data || [];
+    const total = payload.total || 0;
+    renderTable(list);
+    renderPagination(total, page, PAGE_SIZE);
+  } catch (e) {
+    console.error('Erro ao buscar operações:', e);
+    renderTable([]);
+    renderPagination(0, 1, PAGE_SIZE);
+  }
+}
 
-            const detailsRow = document.createElement('tr');
-            detailsRow.classList.add('details-row');
-            detailsRow.id = `details-${op.id}`;
-            detailsRow.innerHTML = `<td colspan="6" class="details-content"><div class="details-wrapper">
-                <span><strong>Nº Programação:</strong> ${op.numero_programacao || 'N/A'}</span>
-                <span><strong>Tipo:</strong> ${op.tipo_programacao || 'N/A'}</span>
-                <span><strong>Motorista:</strong> ${op.nome_motorista || 'N/A'}</span>
-                <span><strong>Veículo:</strong> ${op.placa_veiculo || 'N/A'}</span>
-                <span><strong>Carreta:</strong> ${op.placa_carreta || 'N/A'}</span>
-                <button class="ask-assistant"
-                    data-query="status do ${op.containers ? 'container ' + op.containers : 'booking ' + (op.booking || '')}">
-                    Perguntar ao Assistente
-                </button>
-            </div></td>`;
+function renderTable(items) {
+  if (!tableBodyEl) return;
+  tableBodyEl.innerHTML = '';
+  if (!items || !items.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 10; td.textContent = 'Nenhuma operação encontrada.';
+    tr.appendChild(td); tableBodyEl.appendChild(tr);
+    return;
+  }
 
-            tableBody.append(mainRow, detailsRow);
-        });
-    }
+  items.forEach((op) => {
+    const tr = document.createElement('tr');
+    tr.className = 'operation-row';
 
-    // Adiciona o "ouvinte" de clique para expandir/recolher
-    tableBody.addEventListener('click', (event) => {
-        const row = event.target.closest('.main-row');
-        if (row) {
-            const detailsRow = document.getElementById(`details-${row.dataset.operationId}`);
-            if (detailsRow) detailsRow.classList.toggle('visible');
-        }
-    });
+    const cols = [
+      safeText(op.numero_programacao),
+      safeText(op.tipo_programacao),
+      safeText(op.embarcador_nome || op.embarcador || ''),
+      safeText(op.booking),
+      safeText(op.containers),
+      safeText(op.status_operacao),
+      fmtDateBR(op.previsao_inicio_atendimento),
+      fmtDateBR(op.dt_inicio_execucao),
+      fmtDateBR(op.dt_fim_execucao)
+    ];
 
-    document.body.addEventListener('click', async (e) => {
-        const btn = e.target.closest('.ask-assistant');
-        if (!btn) return;
-        const q = btn.dataset.query || 'ajuda';
-        try { await navigator.clipboard.writeText(q); } catch (_) { }
-        window.openAssistant && window.openAssistant();
-        alert('Abri o assistente. Cole a pergunta no campo e envie:\n\n' + q);
-    });
+    cols.forEach((c) => { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); });
 
+    const tdActions = document.createElement('td');
+    tdActions.innerHTML = `<button class="toggle-details">Detalhes</button>`;
+    tr.appendChild(tdActions);
+    tableBodyEl.appendChild(tr);
 
-    function renderPaginationControls(pagination, filters) {
-        paginationControls.innerHTML = '';
-        if (pagination.totalPages <= 1) return;
-        const prevButton = document.createElement('button');
-        prevButton.textContent = 'Anterior';
-        prevButton.disabled = pagination.currentPage === 1;
-        prevButton.addEventListener('click', () => { fetchClientOperations(pagination.currentPage - 1, filters); });
-        const nextButton = document.createElement('button');
-        nextButton.textContent = 'Próxima';
-        nextButton.disabled = pagination.currentPage === pagination.totalPages;
-        nextButton.addEventListener('click', () => { fetchClientOperations(pagination.currentPage + 1, filters); });
-        const pageInfo = document.createElement('span');
-        pageInfo.textContent = `Página ${pagination.currentPage} de ${pagination.totalPages}`;
-        paginationControls.append(prevButton, pageInfo, nextButton);
-    }
+    const detailsRow = document.createElement('tr');
+    detailsRow.className = 'details-row hidden';
+    const detailsTd = document.createElement('td');
+    detailsTd.colSpan = 10;
+    detailsTd.innerHTML = `
+      <div class="details-wrapper">
+        <span><strong>Nº Programação:</strong> ${safeText(op.numero_programacao)}</span>
+        <span><strong>Tipo:</strong> ${safeText(op.tipo_programacao)}</span>
+        <span><strong>Motorista:</strong> ${safeText(op.nome_motorista)}</span>
+        <span><strong>Veículo:</strong> ${safeText(op.placa_veiculo)}</span>
+        <span><strong>Carreta:</strong> ${safeText(op.placa_carreta)}</span>
+        <button class="ask-assistant"
+          data-query="status do ${op.containers ? ('container ' + op.containers) : ('booking ' + (op.booking || ''))}">
+          Perguntar ao Assistente
+        </button>
+      </div>`;
+    detailsRow.appendChild(detailsTd);
+    tableBodyEl.appendChild(detailsRow);
+  });
+}
 
-    function applyClientFilters() {
-        const filters = {
-            booking: bookingFilter.value.trim(),
-            data_previsao: dataPrevisaoFilter.value,
-        };
-        fetchClientOperations(1, filters);
-    }
+function renderPagination(total, page, pageSize) {
+  if (!paginationEl) return;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const prev = Math.max(1, page - 1);
+  const next = Math.min(totalPages, page + 1);
+  paginationEl.innerHTML = `
+    <div class="pagination">
+      <button ${page === 1 ? 'disabled' : ''} data-goto="${prev}">Anterior</button>
+      <span>Página ${page} de ${totalPages}</span>
+      <button ${page === totalPages ? 'disabled' : ''} data-goto="${next}">Próxima</button>
+    </div>`;
+}
 
-    filterButton.addEventListener('click', applyClientFilters);
-    clearFilterButton.addEventListener('click', () => {
-        bookingFilter.value = '';
-        dataPrevisaoFilter.value = '';
-        applyClientFilters();
-    });
+// ====== EVENTOS ======
+filterButton?.addEventListener('click', () => {
+  fetchClientOperations(1, {
+    booking: bookingFilter ? bookingFilter.value : '',
+    data_previsao: dataPrevisaoFilter ? dataPrevisaoFilter.value : ''
+  });
 });
+
+clearFilterButton?.addEventListener('click', () => {
+  if (bookingFilter) bookingFilter.value = '';
+  if (dataPrevisaoFilter) dataPrevisaoFilter.value = '';
+  fetchClientOperations(1, { booking: '', data_previsao: '' });
+});
+
+paginationEl?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-goto]');
+  if (!btn) return;
+  const goto = Number(btn.getAttribute('data-goto') || '1');
+  fetchClientOperations(goto, currentFilters);
+});
+
+// Toggle details
+if (tableBodyEl) {
+  tableBodyEl.addEventListener('click', (e) => {
+    const toggle = e.target.closest('.toggle-details');
+    if (!toggle) return;
+    const row = toggle.closest('tr');
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains('details-row')) next.classList.toggle('hidden');
+  });
+}
+
+// "Perguntar ao Assistente"
+document.body.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.ask-assistant');
+  if (!btn) return;
+  const q = btn.dataset.query || 'ajuda';
+  try { await navigator.clipboard.writeText(q); } catch (_) {}
+  if (window.openAssistant) {
+    window.openAssistant();
+  } else {
+    const df = document.querySelector('df-messenger');
+    if (df) df.setAttribute('expanded', 'true');
+  }
+  alert('Abri o assistente. Cole a pergunta e envie:\n\n' + q);
+});
+
+// ====== Botões de EXCEL (Cliente) ======
+function getPeriodClient() {
+  const s = document.getElementById('repStartClient')?.value;
+  const e = document.getElementById('repEndClient')?.value;
+  if (!s || !e) return defaultPeriod();
+  return { start: s, end: e };
+}
+function openReport(path, params) {
+  const q = new URLSearchParams(params).toString();
+  window.open(`${API_BASE_URL}${path}?${q}`, '_blank');
+}
+function bindClientReportButtons() {
+  const btnTop = document.getElementById('btnExcelTopClient');
+  const btnAtrasos = document.getElementById('btnExcelAtrasosClient');
+  btnTop?.addEventListener('click', () => {
+    const { start, end } = getPeriodClient();
+    const companyId = window.CLIENT_COMPANY_ID || 0;
+    openReport('/api/reports/top-ofensores.xlsx', { start, end, companyId });
+  });
+  btnAtrasos?.addEventListener('click', () => {
+    const { start, end } = getPeriodClient();
+    const companyId = window.CLIENT_COMPANY_ID || 0;
+    openReport('/api/reports/atrasos.xlsx', { start, end, companyId });
+  });
+}

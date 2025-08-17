@@ -1,14 +1,12 @@
-// server.js — atualizado com escopo por empresa via session-id do Dialogflow Messenger
-// Express + CORS + Webhook Dialogflow + rotas da API
-
+// server.js — atualizado (escopo por empresa + Plano B + Excel)
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
+const ExcelJS = require('exceljs');
 
-// DB (Pool do Postgres / Supabase)
 const db = require('./config/database');
 
-// Rotas existentes da sua API (ajuste os paths se forem diferentes no seu projeto)
 const userRoutes = require('./api/userRoutes');
 const operationRoutes = require('./api/operationRoutes');
 const embarcadorRoutes = require('./api/embarcadorRoutes');
@@ -16,37 +14,38 @@ const dashboardRoutes = require('./api/dashboardRoutes');
 const clientRoutes = require('./api/clientRoutes');
 
 const app = express();
-
-// Middlewares básicos
+app.set('trust proxy', 1);
 app.use(cors());
-app.use(express.json()); // necessário para ler req.body JSON
+app.use(express.json());
 
-// (Opcional) log simples de requisições
+// log simples
 app.use((req, _res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 });
 
 // -----------------------------
-// Helpers
+// helpers
 // -----------------------------
-function toBR(iso) {
-  try { return new Date(iso).toLocaleDateString('pt-BR'); } catch { return iso; }
+function toBR(iso) { try { return new Date(iso).toLocaleDateString('pt-BR'); } catch { return iso; } }
+function fmtFull(iso) { try { return new Date(iso).toLocaleString('pt-BR'); } catch { return iso || '—'; } }
+
+// monta a base pública para links absolutos
+function getBaseUrl(req) {
+  return process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
 }
 
-// Lê o session-id enviado pelo Dialogflow Messenger
-// Formato esperado no front:
-//  - cliente: "client:<companyId>:<email>"
-//  - admin:   "admin:0:<email>"
+// session-id do Dialogflow Messenger:
+// - cliente: client:<companyId>:<email>
+// - admin:   admin:0:<email>
 function parseSession(req) {
-  const sessionPath = req.body?.session || ''; // ex: projects/xxx/agent/sessions/client:123:usuario
+  const sessionPath = req.body?.session || ''; // projects/.../sessions/client:123:user
   const sessionId = sessionPath.split('/').pop() || '';
   const [role = 'client', companyStr = '0'] = sessionId.split(':');
   const companyId = Number(companyStr) || 0;
   return { role, companyId, sessionId };
 }
 
-// Monta cláusula de filtro por empresa quando for cliente
 function companyFilter(alias, nextParamIndex, role, companyId) {
   if (role === 'client' && companyId > 0) {
     return { clause: ` AND ${alias}.embarcador_id = $${nextParamIndex}`, value: companyId };
@@ -54,12 +53,23 @@ function companyFilter(alias, nextParamIndex, role, companyId) {
   return { clause: '', value: null };
 }
 
+// botão (richContent) para Dialogflow Messenger
+function dfButton(link, text) {
+  return {
+    payload: {
+      richContent: [[
+        { type: 'button', text, link, icon: { type: 'chevron_right' } }
+      ]]
+    }
+  };
+}
+
 // -----------------------------
-// Webhook do Dialogflow
+// Webhook Dialogflow
 // -----------------------------
 const dfHandler = async (req, res) => {
   try {
-    // Segurança simples por token (defina DF_TOKEN no Render e envie o mesmo no header x-dialogflow-token)
+    // auth opcional por header
     if (process.env.DF_TOKEN) {
       const got = req.get('x-dialogflow-token');
       if (got !== process.env.DF_TOKEN) {
@@ -67,66 +77,55 @@ const dfHandler = async (req, res) => {
       }
     }
 
-    // Pega role/companyId do session-id
     const { role, companyId } = parseSession(req);
-
     const intentName = (req.body?.queryResult?.intent?.displayName || '').replace(/\s+/g, '');
     const p = req.body?.queryResult?.parameters || {};
 
-    // Normalização dos parâmetros usuais
     const booking = (p.booking || p.booking_code || p['booking-code'] || '').toString().trim();
     const containerRaw = (p.container || p.container_code || p['container-code'] || '').toString().trim();
     const container = containerRaw.replace(/\s|-/g, '');
 
-    // Health intent (teste)
+    // health
     if (intentName === 'Ping') {
       return res.json({ fulfillmentText: 'Webhook OK! ✅' });
     }
 
     // -----------------
-    // RastrearCarga (booking OU container) com filtro por empresa quando cliente
+    // RastrearCarga
     // -----------------
     if (intentName === 'RastrearCarga') {
       if (!booking && !container) {
         return res.json({ fulfillmentText: 'Me diga o *booking* ou o número do *container* para eu rastrear 🙂' });
       }
+
+      const params = [ booking ? `%${booking}%` : '', container ? `%${container}%` : '' ];
+      const filt = companyFilter('op', params.length + 1, role, companyId);
+      if (filt.value !== null) params.push(filt.value);
+
+      const sql = `
+        SELECT emb.nome_principal AS embarcador, op.status_operacao,
+               op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
+               op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
+        FROM operacoes op
+        JOIN embarcadores emb ON op.embarcador_id = emb.id
+        WHERE (
+          ($1 <> '' AND op.booking ILIKE $1)
+          OR ($2 <> '' AND REPLACE(REPLACE(op.containers,'-',''),' ','') ILIKE $2)
+        )
+        ${filt.clause}
+        ORDER BY op.id DESC
+        LIMIT 3;`;
+
       try {
-        const params = [];
-        const likeBooking = booking ? `%${booking}%` : '';
-        const likeContainer = container ? `%${container}%` : '';
-        params.push(likeBooking, likeContainer);
-
-        const filt = companyFilter('op', params.length + 1, role, companyId);
-        if (filt.value !== null) params.push(filt.value);
-
-        const sql = `
-          SELECT emb.nome_principal AS embarcador, op.status_operacao,
-                 op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
-                 op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
-          FROM operacoes op
-          JOIN embarcadores emb ON op.embarcador_id = emb.id
-          WHERE (
-            ($1 <> '' AND op.booking ILIKE $1)
-            OR ($2 <> '' AND REPLACE(REPLACE(op.containers,'-',''),' ','') ILIKE $2)
-          )
-          ${filt.clause}
-          ORDER BY op.id DESC
-          LIMIT 3;`;
-
         const { rows } = await db.query(sql, params);
+        if (!rows.length) return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código?' });
 
-        if (!rows.length) {
-          return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código pra mim?' });
-        }
-
-        const fmt = (d) => (d ? new Date(d).toLocaleString('pt-BR') : '—');
-        const lines = rows.map(r => (
+        const lines = rows.map(r =>
           `• ${r.tipo_programacao} — ${r.status_operacao || 'Sem status'}\n` +
           `  Embarcador: ${r.embarcador}\n` +
           `  Booking: ${r.booking} | Container(s): ${r.containers}\n` +
-          `  Prev/Execução: ${fmt(r.dt_inicio_execucao || r.previsao_inicio_atendimento || r.dt_previsao_entrega_recalculada)}`
-        ));
-
+          `  Prev/Execução: ${fmtFull(r.dt_inicio_execucao || r.previsao_inicio_atendimento || r.dt_previsao_entrega_recalculada)}`
+        );
         return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
       } catch (e) {
         console.error('RastrearCarga error:', e);
@@ -135,7 +134,7 @@ const dfHandler = async (req, res) => {
     }
 
     // -----------------
-    // TopOfensores — com filtro por empresa quando cliente
+    // TopOfensores  (texto + botão Excel)
     // -----------------
     if (intentName === 'TopOfensores') {
       const period = p['date-period'] || {};
@@ -161,13 +160,22 @@ const dfHandler = async (req, res) => {
         LIMIT 10;`;
 
       const { rows } = await db.query(q, params);
-      if (!rows.length) return res.json({ fulfillmentText: 'Sem atrasos no período 👏' });
+      if (!rows.length) {
+        return res.json({ fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}): sem atrasos 👏` });
+      }
+
       const txt = rows.map((r, i) => `${i + 1}. ${r.embarcador}: ${r.qtd}`).join('\n');
-      return res.json({ fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}):\n${txt}` });
+      const base = getBaseUrl(req);
+      const link = `${base}/api/reports/top-ofensores.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
+
+      return res.json({
+        fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}):\n${txt}`,
+        fulfillmentMessages: [ dfButton(link, 'Baixar Excel (Top 10)') ]
+      });
     }
 
     // -----------------
-    // RelatorioPeriodo (tipo "atrasos") — com filtro por empresa quando cliente
+    // RelatorioPeriodo (tipo: atrasos)  (texto + botão Excel)
     // -----------------
     if (intentName === 'RelatorioPeriodo') {
       const period = p['date-period'] || {};
@@ -190,14 +198,70 @@ const dfHandler = async (req, res) => {
 
         const { rows } = await db.query(q, params);
         const r = rows[0] || { iniciadas_atrasadas: 0, nao_iniciadas_atrasadas: 0, total: 0 };
-        return res.json({ fulfillmentText:
-          `Resumo ${toBR(start)}–${toBR(end)}:\n• Iniciadas com atraso: ${r.iniciadas_atrasadas}\n• Não iniciadas e vencidas: ${r.nao_iniciadas_atrasadas}\n• Total: ${r.total}` });
+
+        const base = getBaseUrl(req);
+        const link = `${base}/api/reports/atrasos.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
+
+        return res.json({
+          fulfillmentText:
+            `Resumo ${toBR(start)}–${toBR(end)}:\n` +
+            `• Iniciadas com atraso: ${r.iniciadas_atrasadas}\n` +
+            `• Não iniciadas e vencidas: ${r.nao_iniciadas_atrasadas}\n` +
+            `• Total: ${r.total}`,
+          fulfillmentMessages: [ dfButton(link, 'Baixar Excel (Resumo de Atrasos)') ]
+        });
       }
 
       return res.json({ fulfillmentText: 'Relatório ainda não implementado. Tente “atrasos” ou “top ofensores”.' });
     }
 
-    // Fallback: ecoa a intent recebida
+    // -----------------
+    // PLANO B: detectar container/booking no texto quando a intent não bater
+    // -----------------
+    const qtext = (req.body?.queryResult?.queryText || '').trim();
+    const mCont = qtext.match(/([A-Za-z]{4}\\s?-?\\d{3}\\s?-?\\d{4})/i);   // TLLU4449470 | TLLU 444 9470
+    const mBook = qtext.match(/(?:booking\\s*)?([A-Za-z0-9-]{5,20})/i); // P10474544 etc.
+
+    if (mCont || mBook) {
+      const containerRaw2 = (mCont && mCont[1]) ? mCont[1] : '';
+      const booking2 = (!mCont && mBook && mBook[1]) ? mBook[1] : '';
+      const container2 = containerRaw2.replace(/\\s|-/g, '');
+
+      const params2 = [ booking2 ? `%${booking2}%` : '', container2 ? `%${container2}%` : '' ];
+      const filt2 = companyFilter('op', params2.length + 1, role, companyId);
+      if (filt2.value !== null) params2.push(filt2.value);
+
+      const sql2 = `
+        SELECT emb.nome_principal AS embarcador, op.status_operacao,
+               op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
+               op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
+        FROM operacoes op
+        JOIN embarcadores emb ON op.embarcador_id = emb.id
+        WHERE (
+          ($1 <> '' AND op.booking ILIKE $1)
+          OR ($2 <> '' AND REPLACE(REPLACE(op.containers,'-',''),' ','') ILIKE $2)
+        )
+        ${filt2.clause}
+        ORDER BY op.id DESC
+        LIMIT 3;`;
+
+      try {
+        const { rows } = await db.query(sql2, params2);
+        if (!rows.length) return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código?' });
+
+        const lines = rows.map(r =>
+          `• ${r.tipo_programacao} — ${r.status_operacao || 'Sem status'}\n` +
+          `  Embarcador: ${r.embarcador}\n` +
+          `  Booking: ${r.booking} | Container(s): ${r.containers}\n` +
+          `  Prev/Execução: ${fmtFull(r.dt_inicio_execucao || r.previsao_inicio_atendimento || r.dt_previsao_entrega_recalculada)}`
+        );
+        return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
+      } catch (e) {
+        console.error('Fallback detect error:', e);
+      }
+    }
+
+    // fallback padrão
     const intentOriginal = req.body?.queryResult?.intent?.displayName || '';
     return res.json({ fulfillmentText: `Recebi a intent: ${intentOriginal || 'desconhecida'}` });
   } catch (err) {
@@ -206,12 +270,104 @@ const dfHandler = async (req, res) => {
   }
 };
 
-// Expor as duas URLs (evita 404 por caminho diferente)
+// rotas do webhook
 app.post('/api/webhook/dialogflow', dfHandler);
 app.post('/webhook/dialogflow', dfHandler);
 
 // -----------------------------
-// Demais rotas da sua API
+// Endpoints Excel
+// -----------------------------
+app.get('/api/reports/top-ofensores.xlsx', async (req, res) => {
+  try {
+    const start = req.query.start ? new Date(req.query.start).toISOString() : new Date(Date.now() - 30*864e5).toISOString();
+    const end   = req.query.end   ? new Date(req.query.end).toISOString()   : new Date().toISOString();
+    const companyId = Number(req.query.companyId || 0);
+
+    const params = [start, end];
+    let clause = '';
+    if (companyId) { clause = ' AND op.embarcador_id = $3'; params.push(companyId); }
+
+    const q = `
+      SELECT emb.nome_principal AS embarcador, COUNT(*) AS qtd
+      FROM operacoes op
+      JOIN embarcadores emb ON op.embarcador_id = emb.id
+      WHERE op.previsao_inicio_atendimento BETWEEN $1 AND $2
+        AND (
+          (op.dt_inicio_execucao > op.previsao_inicio_atendimento)
+          OR (op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW())
+        )
+      ${clause}
+      GROUP BY 1
+      ORDER BY qtd DESC
+      LIMIT 10;`;
+
+    const { rows } = await db.query(q, params);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Top Ofensores');
+    ws.columns = [
+      { header: 'Posição',     key: 'pos',       width: 10 },
+      { header: 'Embarcador',  key: 'embarcador',width: 40 },
+      { header: 'Qtd Atrasos', key: 'qtd',       width: 15 },
+      { header: 'Período',     key: 'periodo',   width: 25 },
+    ];
+    rows.forEach((r, i) => ws.addRow({ pos: i+1, embarcador: r.embarcador, qtd: r.qtd, periodo: `${start.slice(0,10)} a ${end.slice(0,10)}` }));
+    ws.getRow(1).font = { bold: true };
+
+    res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="top-ofensores_${start.slice(0,10)}_${end.slice(0,10)}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (e) {
+    console.error('excel top-ofensores', e);
+    res.status(500).send('Erro ao gerar Excel');
+  }
+});
+
+app.get('/api/reports/atrasos.xlsx', async (req, res) => {
+  try {
+    const start = req.query.start ? new Date(req.query.start).toISOString() : new Date(Date.now() - 30*864e5).toISOString();
+    const end   = req.query.end   ? new Date(req.query.end).toISOString()   : new Date().toISOString();
+    const companyId = Number(req.query.companyId || 0);
+
+    const params = [start, end];
+    let clause = '';
+    if (companyId) { clause = ' AND op.embarcador_id = $3'; params.push(companyId); }
+
+    const q = `
+      SELECT COUNT(*) FILTER (WHERE op.dt_inicio_execucao > op.previsao_inicio_atendimento) AS iniciadas_atrasadas,
+             COUNT(*) FILTER (WHERE op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW()) AS nao_iniciadas_atrasadas,
+             COUNT(*) AS total
+      FROM operacoes op
+      WHERE op.previsao_inicio_atendimento BETWEEN $1 AND $2
+      ${clause};`;
+
+    const { rows } = await db.query(q, params);
+    const r = rows[0] || { iniciadas_atrasadas: 0, nao_iniciadas_atrasadas: 0, total: 0 };
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Resumo Atrasos');
+    ws.columns = [
+      { header: 'Período',                 key: 'periodo', width: 25 },
+      { header: 'Iniciadas com atraso',    key: 'ini',     width: 22 },
+      { header: 'Não iniciadas e vencidas',key: 'nao',     width: 28 },
+      { header: 'Total',                   key: 'total',   width: 10 },
+    ];
+    ws.addRow({ periodo: `${start.slice(0,10)} a ${end.slice(0,10)}`, ini: r.iniciadas_atrasadas, nao: r.nao_iniciadas_atrasadas, total: r.total });
+    ws.getRow(1).font = { bold: true };
+
+    res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="atrasos_${start.slice(0,10)}_${end.slice(0,10)}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (e) {
+    console.error('excel atrasos', e);
+    res.status(500).send('Erro ao gerar Excel');
+  }
+});
+
+// -----------------------------
+// demais rotas da sua API
 // -----------------------------
 app.use('/api/users', userRoutes);
 app.use('/api/operations', operationRoutes);
@@ -219,11 +375,9 @@ app.use('/api/embarcadores', embarcadorRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/client', clientRoutes);
 
-// Healthcheck
+// health
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 
-// Subir servidor
+// up
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`API up on :${PORT}`));

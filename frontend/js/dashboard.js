@@ -528,3 +528,35 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) { console.error(error); }
     }
 });
+
+// === Botões de Excel no portal do cliente ===
+const API_BASE_URL = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
+
+function todayISO(d = new Date()) { return d.toISOString().slice(0,10); }
+function defaultPeriod() {
+  const end = new Date();
+  const start = new Date(Date.now() - 30*864e5);
+  return { start: todayISO(start), end: todayISO(end) };
+}
+function getPeriodClient() {
+  const s = document.getElementById('repStartClient')?.value;
+  const e = document.getElementById('repEndClient')?.value;
+  if (!s || !e) return defaultPeriod();
+  return { start: s, end: e };
+}
+function openReport(path, params) {
+  const q = new URLSearchParams(params).toString();
+  window.open(`${API_BASE_URL}${path}?${q}`, '_blank');
+}
+
+document.getElementById('btnExcelTopClient')?.addEventListener('click', () => {
+  const { start, end } = getPeriodClient();
+  const companyId = window.CLIENT_COMPANY_ID || 0;
+  openReport('/api/reports/top-ofensores.xlsx', { start, end, companyId });
+});
+
+document.getElementById('btnExcelAtrasosClient')?.addEventListener('click', () => {
+  const { start, end } = getPeriodClient();
+  const companyId = window.CLIENT_COMPANY_ID || 0;
+  openReport('/api/reports/atrasos.xlsx', { start, end, companyId });
+});

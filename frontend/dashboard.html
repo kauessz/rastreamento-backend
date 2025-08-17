@@ -28,6 +28,24 @@
             --df-messenger-user-message: #111827;
             --df-messenger-send-icon: #93c5fd;
         }
+
+        .btn {
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid #d0d7de;
+            background: #f6f8fa;
+            cursor: pointer
+        }
+
+        body.dark-mode .btn {
+            background: #0b1220;
+            border-color: #1f2937;
+            color: #e5e7eb
+        }
+
+        .btn:hover {
+            filter: brightness(0.98);
+        }
     </style>
 </head>
 
@@ -133,6 +151,15 @@
                     <canvas id="clientesChart"></canvas>
                 </div>
             </div>
+            <!-- Barra de Relatórios (Admin) -->
+            <div class="report-bar" style="display:flex; gap:.5rem; align-items:center; margin:12px 0;">
+                <label>Período:</label>
+                <input type="date" id="repStart" />
+                <input type="date" id="repEnd" />
+                <button id="btnExcelTop" class="btn">Top 10 (Excel)</button>
+                <button id="btnExcelAtrasos" class="btn">Resumo de Atrasos (Excel)</button>
+            </div>
+
         </section>
 
         <section class="dashboard-section">

@@ -1,21 +1,21 @@
-// Em: src/api/embarcadorRoutes.js
-
+// src/api/embarcadorRoutes.js
 const express = require('express');
 const router = express.Router();
+
 const embarcadorController = require('../controllers/embarcadorController');
 const authMiddleware = require('../middlewares/authMiddleware');
 const isAdmin = require('../middlewares/adminMiddleware');
 
-// Rota para buscar a lista de embarcadores mestres (para os filtros)
-router.get('/', authMiddleware, isAdmin, embarcadorController.getAllEmbarcadores);
+// Lista mestres (para popular o <select> e filtros)
+router.get('/', authMiddleware, isAdmin, embarcadorController.listMasters);
 
-// Rota para buscar todos os apelidos
+// Lista aliases (pendentes por padrão; aceita ?only=unassigned|dupe|all&q=texto)
 router.get('/aliases', authMiddleware, isAdmin, embarcadorController.listAliases);
 
-// Rota para reassociar um apelido
-router.put('/aliases/:aliasId/reassign', authMiddleware, isAdmin, embarcadorController.reassignAlias);
+// Reassociar um alias a um novo mestre
+router.put('/aliases/:id/reassign', authMiddleware, isAdmin, embarcadorController.reassignAlias);
 
-// Rota para apagar um apelido
-router.delete('/aliases/:aliasId', authMiddleware, isAdmin, embarcadorController.deleteAlias);
+// Excluir um alias
+router.delete('/aliases/:id', authMiddleware, isAdmin, embarcadorController.deleteAlias);
 
 module.exports = router;

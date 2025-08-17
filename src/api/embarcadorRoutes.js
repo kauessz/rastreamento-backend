@@ -10,7 +10,7 @@ const isAdmin = require('../middlewares/adminMiddleware');
 router.get('/', authMiddleware, isAdmin, embarcadorController.getAllEmbarcadores);
 
 // Rota para buscar todos os apelidos
-router.get('/aliases', authMiddleware, isAdmin, embarcadorController.getAllAliases);
+router.get('/aliases', authMiddleware, isAdmin, embarcadorController.listAliases);
 
 // Rota para reassociar um apelido
 router.put('/aliases/:aliasId/reassign', authMiddleware, isAdmin, embarcadorController.reassignAlias);

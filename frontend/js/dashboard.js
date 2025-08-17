@@ -320,7 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btn = e.target.closest('.ask-assistant');
     if (!btn) return;
     const q = btn.dataset.query || 'ajuda';
-    try { await navigator.clipboard.writeText(q); } catch (_) {}
+    try { await navigator.clipboard.writeText(q); } catch (_) { }
     window.openAssistant && window.openAssistant();
     alert('Abri o assistente. Cole a pergunta no campo e envie:\n\n' + q); // <- corrigido
   });
@@ -402,17 +402,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function fetchAndRenderAliases() {
     if (!currentToken) return;
+
     aliasesTableBody.innerHTML = `<tr><td colspan="4">Carregando apelidos...</td></tr>`;
+
     try {
-      const response = await fetch(`${API_BASE_URL}/api/embarcadores/aliases`, {
+      const resp = await fetch(`${API_BASE_URL}/api/embarcadores/aliases`, {
         headers: { 'Authorization': `Bearer ${currentToken}` }
       });
-      if (!response.ok) throw new Error((await response.json()).message);
-      const aliases = await response.json();
+      if (!resp.ok) throw new Error((await resp.json()).message || 'Falha ao buscar apelidos');
+
+      // ↓↓↓ MOSTRAR APENAS PENDENTES POR PADRÃO ↓↓↓
+      let aliases = await resp.json();
+      aliases = (aliases || []).filter(a => !a.mestre_id && !a.mestre_nome);
+      // ↑↑↑ MOSTRAR APENAS PENDENTES POR PADRÃO ↑↑↑
+
       renderAliasesTable(aliases);
-    } catch (error) {
-      console.error("Erro ao buscar apelidos:", error);
-      aliasesTableBody.innerHTML = `<tr><td colspan="4" style="color: red;">${error.message}</td></tr>`;
+    } catch (err) {
+      console.error('Erro ao buscar apelidos:', err);
+      aliasesTableBody.innerHTML = `<tr><td colspan="4" style="color:red;">${err.message}</td></tr>`;
     }
   }
 
@@ -501,10 +508,10 @@ document.addEventListener('DOMContentLoaded', () => {
 // ===============================
 // Relatórios Excel (Admin)
 // ===============================
-function adminTodayISO(d = new Date()) { return d.toISOString().slice(0,10); }
+function adminTodayISO(d = new Date()) { return d.toISOString().slice(0, 10); }
 function adminDefaultPeriod() {
   const end = new Date();
-  const start = new Date(Date.now() - 30*864e5);
+  const start = new Date(Date.now() - 30 * 864e5);
   return { start: adminTodayISO(start), end: adminTodayISO(end) };
 }
 function getAdminPeriod() {
@@ -517,7 +524,7 @@ function openAdminReport(path, params) {
   const q = new URLSearchParams(params).toString();
   window.open(`${window.API_BASE_URL}${path}?${q}`, '_blank');
 }
-(function bindAdminExcelButtons(){
+(function bindAdminExcelButtons() {
   const btnTop = document.getElementById('btnExcelTop');
   const btnAtrasos = document.getElementById('btnExcelAtrasos');
   btnTop && btnTop.addEventListener('click', () => {

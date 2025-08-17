@@ -72,52 +72,70 @@ exports.deleteAlias = async (req, res) => {
     }
 };
 
-// Lista de aliases com filtros: only=unassigned | dupe | all, e busca (q)
+// Lista aliases com filtros: only=unassigned | dupe | all, e busca (q)
+// Tolerante: usa unaccent se existir; se não, usa translate() como fallback.
 exports.listAliases = async (req, res) => {
   try {
     const only = (req.query.only || 'unassigned').toLowerCase(); // padrão: só pendentes
     const q = (req.query.q || '').trim();
 
-    // Normalização no SQL: minúsculo, sem acentos, só [a-z0-9]
-    const aliasKey = `unaccent(lower(regexp_replace(a.nome_alias, '[^a-z0-9]', '', 'g')))`;
-    const masterKey = `unaccent(lower(regexp_replace(e.nome_principal, '[^a-z0-9]', '', 'g')))`;
+    // 1) Detecta se unaccent está instalada
+    let hasUnaccent = false;
+    try {
+      const chk = await db.query(
+        "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='unaccent') AS has;"
+      );
+      hasUnaccent = !!chk.rows?.[0]?.has;
+    } catch (_) {}
 
+    // 2) Função normalizadora: remove acento/esp e mantém só [a-z0-9]
+    const norm = (field) =>
+      hasUnaccent
+        ? `unaccent(lower(regexp_replace(${field}, '[^a-z0-9]', '', 'g')))`
+        : `lower(
+            regexp_replace(
+              translate(${field},
+                'ÁÀÂÃÄÅÇÉÈÊËÍÌÎÏÑÓÒÔÕÖÚÙÛÜÝáàâãäåçéèêëíìîïñóòôõöúùûüýÿ',
+                'AAAAAACEEEEIIIINOOOOOUUUUYaaaaaaceeeeiiiinooooouuuuyy'
+              ),
+              '[^a-z0-9]', '', 'g'
+            )
+          )`;
+
+    const aliasKey  = norm('a.nome_alias');
+    const masterKey = norm('e.nome_principal');
+
+    // 3) Monta WHERE pelos filtros
     const params = [];
     let where = 'TRUE';
 
     if (only === 'unassigned') {
       where = 'a.mestre_id IS NULL';
     } else if (only === 'dupe') {
-      // aliases que são iguais ao nome do mestre (provável duplicado — dá pra excluir)
       where = `a.mestre_id IS NOT NULL AND ${aliasKey} = ${masterKey}`;
-    } // 'all' mantém where = TRUE
+    } // 'all' mantém TRUE
 
     if (q) {
-      // busca por texto (normalizando o termo no JS também)
-      const qnorm = q.normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+      const qnorm = q.normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '')
+        .replace(/[^a-z0-9]/gi, '')
+        .toLowerCase();
       params.push(`%${qnorm}%`);
-      where += ` AND (
-        ${aliasKey} LIKE $${params.length}
-        OR ${masterKey} LIKE $${params.length}
-      )`;
+      where += ` AND (${aliasKey} LIKE $${params.length} OR ${masterKey} LIKE $${params.length})`;
     }
 
+    // 4) Query
     const sql = `
-      SELECT
-        a.id,
-        a.nome_alias,
-        a.mestre_id,
-        e.nome_principal AS mestre_nome
+      SELECT a.id, a.nome_alias, a.mestre_id, e.nome_principal AS mestre_nome
       FROM embarcador_aliases a
       LEFT JOIN embarcadores e ON e.id = a.mestre_id
       WHERE ${where}
       ORDER BY a.nome_alias ASC;
     `;
-
     const { rows } = await db.query(sql, params);
     return res.status(200).json(rows);
   } catch (err) {
-    console.error('listAliases error:', err);
+    console.error('listAliases error:', err?.message || err);
     return res.status(500).json({ message: 'Erro ao listar aliases.' });
   }
 };

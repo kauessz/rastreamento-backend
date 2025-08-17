@@ -30,17 +30,20 @@ if (themeToggle) {
 
 // ====== ELEMENTOS ======
 const userEmailEl = document.getElementById('userEmail');
-const kpiTotalEl = document.getElementById('kpiTotal');
-const kpiOnTimeEl = document.getElementById('kpiOnTime');
-const kpiLateEl = document.getElementById('kpiLate');
-const kpiLatePctEl = document.getElementById('kpiLatePct');
+const kpiTotalEl = document.querySelector('#kpi-total .kpi-value');
+const kpiOnTimeEl = document.querySelector('#kpi-ontime .kpi-value');
+// CORRIGIDO: O ID no HTML é 'kpi-atrasadas', não 'kpiLate'
+const kpiLateEl = document.querySelector('#kpi-atrasadas .kpi-value'); 
+// CORRIGIDO: O ID no HTML é 'kpi-percentual', não 'kpiLatePct'
+const kpiLatePctEl = document.querySelector('#kpi-percentual .kpi-value');
 
 const bookingFilter = document.getElementById('bookingFilter');
 const dataPrevisaoFilter = document.getElementById('dataPrevisaoFilter');
 const filterButton = document.getElementById('filterButton');
 const clearFilterButton = document.getElementById('clearFilterButton');
 
-const tableEl = document.querySelector('#operationsTable') || document.querySelector('table');
+const tableEl = document.getElementById('clientOperationsTable');
+//const tableEl = document.querySelector('clientOperationsTable') || document.querySelector('table');
 const tableBodyEl = tableEl ? tableEl.querySelector('tbody') : null;
 const paginationEl = document.getElementById('paginationControls') || document.getElementById('pagination');
 
@@ -120,6 +123,7 @@ async function resolveClientCompanyId() {
 async function fetchClientKpis() {
   try {
     const data = await apiGet(`/api/client/kpis`);
+    // Agora as atribuições funcionarão corretamente
     if (kpiTotalEl) kpiTotalEl.textContent = safeText(data.total_operacoes);
     if (kpiOnTimeEl) kpiOnTimeEl.textContent = safeText(data.operacoes_on_time);
     if (kpiLateEl) kpiLateEl.textContent = safeText(data.operacoes_atrasadas);

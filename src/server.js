@@ -35,6 +35,13 @@ function getBaseUrl(req) {
   return process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
 }
 
+// normaliza container removendo tudo que não for letra/número
+function sanitizeContainer(s) {
+  return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+const CONTAINER_RE = /([A-Za-z]{4}\s*-?\s*\d{3}\s*-?\s*\d{4})/i;
+
 // session-id do Dialogflow Messenger:
 // - cliente: client:<companyId>:<email>
 // - admin:   admin:0:<email>
@@ -94,37 +101,58 @@ const dfHandler = async (req, res) => {
     // RastrearCarga
     // -----------------
     if (intentName === 'RastrearCarga') {
-      if (!booking && !container) {
+      const qtext = (req.body?.queryResult?.queryText || '').trim();
+
+      let bookingVal = (p.booking || p.booking_code || p['booking-code'] || '').toString().trim();
+      let containerVal = sanitizeContainer((p.container || p.container_code || p['container-code'] || '').toString().trim());
+
+      // se a intent não preencheu parâmetros, tenta pegar do texto
+      if (!bookingVal && !containerVal) {
+        const mCont = qtext.match(CONTAINER_RE);
+        if (mCont) {
+          containerVal = sanitizeContainer(mCont[1]);
+        } else {
+          // como fallback leve, tenta capturar um token “parecendo booking”
+          const mBook = qtext.match(/\b([A-Za-z0-9-]{6,20})\b/);
+          if (mBook) bookingVal = mBook[1];
+        }
+      }
+
+      if (!bookingVal && !containerVal) {
         return res.json({ fulfillmentText: 'Me diga o *booking* ou o número do *container* para eu rastrear 🙂' });
       }
 
-      const params = [ booking ? `%${booking}%` : '', container ? `%${container}%` : '' ];
-      const filt = companyFilter('op', params.length + 1, role, companyId);
-      if (filt.value !== null) params.push(filt.value);
-
-      const sql = `
-        SELECT emb.nome_principal AS embarcador, op.status_operacao,
-               op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
-               op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
-        FROM operacoes op
-        JOIN embarcadores emb ON op.embarcador_id = emb.id
-        WHERE (
-          ($1 <> '' AND op.booking ILIKE $1)
-          OR ($2 <> '' AND REPLACE(REPLACE(op.containers,'-',''),' ','') ILIKE $2)
-        )
-        ${filt.clause}
-        ORDER BY op.id DESC
-        LIMIT 3;`;
-
       try {
+        const params = [
+          bookingVal ? `%${bookingVal}%` : '',
+          containerVal ? `%${containerVal}%` : ''
+        ];
+        const filt = companyFilter('op', params.length + 1, role, companyId);
+        if (filt.value !== null) params.push(filt.value);
+
+        const sql = `
+      SELECT emb.nome_principal AS embarcador, op.status_operacao,
+             op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
+             op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
+      FROM operacoes op
+      JOIN embarcadores emb ON op.embarcador_id = emb.id
+      WHERE (
+        ($1 <> '' AND op.booking ILIKE $1)
+        OR ($2 <> '' AND regexp_replace(op.containers, '[^A-Za-z0-9]', '', 'g') ILIKE $2)
+      )
+      ${filt.clause}
+      ORDER BY op.id DESC
+      LIMIT 3;`;
+
         const { rows } = await db.query(sql, params);
         if (!rows.length) return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código?' });
 
+        const fmt = (d) => (d ? new Date(d).toLocaleString('pt-BR') : '—');
         const lines = rows.map(r =>
           `• ${r.tipo_programacao} — ${r.status_operacao || 'Sem status'}\n` +
           `  Embarcador: ${r.embarcador}\n` +
           `  Booking: ${r.booking} | Container(s): ${r.containers}\n` +
-          `  Prev/Execução: ${fmtFull(r.dt_inicio_execucao || r.previsao_inicio_atendimento || r.dt_previsao_entrega_recalculada)}`
+          `  Prev/Execução: ${fmt(r.dt_inicio_execucao || r.previsao_inicio_atendimento || r.dt_previsao_entrega_recalculada)}`
         );
         return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
       } catch (e) {
@@ -133,13 +161,14 @@ const dfHandler = async (req, res) => {
       }
     }
 
+
     // -----------------
     // TopOfensores  (texto + botão Excel)
     // -----------------
     if (intentName === 'TopOfensores') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
-      const end   = period.endDate   || new Date().toISOString();
+      const end = period.endDate || new Date().toISOString();
 
       const params = [start, end];
       const filt = companyFilter('op', params.length + 1, role, companyId);
@@ -166,11 +195,11 @@ const dfHandler = async (req, res) => {
 
       const txt = rows.map((r, i) => `${i + 1}. ${r.embarcador}: ${r.qtd}`).join('\n');
       const base = getBaseUrl(req);
-      const link = `${base}/api/reports/top-ofensores.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
+      const link = `${base}/api/reports/top-ofensores.xlsx?start=${start.slice(0, 10)}&end=${end.slice(0, 10)}${(role === 'client' && companyId) ? `&companyId=${companyId}` : ''}`;
 
       return res.json({
         fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}):\n${txt}`,
-        fulfillmentMessages: [ dfButton(link, 'Baixar Excel (Top 10)') ]
+        fulfillmentMessages: [dfButton(link, 'Baixar Excel (Top 10)')]
       });
     }
 
@@ -180,8 +209,8 @@ const dfHandler = async (req, res) => {
     if (intentName === 'RelatorioPeriodo') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
-      const end   = period.endDate   || new Date().toISOString();
-      const tipo  = (p.report_type || 'atrasos').toString();
+      const end = period.endDate || new Date().toISOString();
+      const tipo = (p.report_type || 'atrasos').toString();
 
       if (tipo === 'atrasos') {
         const params = [start, end];
@@ -200,7 +229,7 @@ const dfHandler = async (req, res) => {
         const r = rows[0] || { iniciadas_atrasadas: 0, nao_iniciadas_atrasadas: 0, total: 0 };
 
         const base = getBaseUrl(req);
-        const link = `${base}/api/reports/atrasos.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
+        const link = `${base}/api/reports/atrasos.xlsx?start=${start.slice(0, 10)}&end=${end.slice(0, 10)}${(role === 'client' && companyId) ? `&companyId=${companyId}` : ''}`;
 
         return res.json({
           fulfillmentText:
@@ -208,7 +237,7 @@ const dfHandler = async (req, res) => {
             `• Iniciadas com atraso: ${r.iniciadas_atrasadas}\n` +
             `• Não iniciadas e vencidas: ${r.nao_iniciadas_atrasadas}\n` +
             `• Total: ${r.total}`,
-          fulfillmentMessages: [ dfButton(link, 'Baixar Excel (Resumo de Atrasos)') ]
+          fulfillmentMessages: [dfButton(link, 'Baixar Excel (Resumo de Atrasos)')]
         });
       }
 
@@ -216,50 +245,64 @@ const dfHandler = async (req, res) => {
     }
 
     // -----------------
-    // PLANO B: detectar container/booking no texto quando a intent não bater
+    // PLANO B: detectar container/booking no texto quando nenhuma intent casa
     // -----------------
-    const qtext = (req.body?.queryResult?.queryText || '').trim();
-    const mCont = qtext.match(/([A-Za-z]{4}\\s?-?\\d{3}\\s?-?\\d{4})/i);   // TLLU4449470 | TLLU 444 9470
-    const mBook = qtext.match(/(?:booking\\s*)?([A-Za-z0-9-]{5,20})/i); // P10474544 etc.
+    try {
+      const qtext = (req.body?.queryResult?.queryText || '').trim();
 
-    if (mCont || mBook) {
-      const containerRaw2 = (mCont && mCont[1]) ? mCont[1] : '';
-      const booking2 = (!mCont && mBook && mBook[1]) ? mBook[1] : '';
-      const container2 = containerRaw2.replace(/\\s|-/g, '');
+      // tenta detectar container; se não houver, tenta algo que pareça booking
+      const mCont = qtext.match(CONTAINER_RE);                                 // ex.: TLLU4449470 | TLLU 444 9470
+      const mBook = qtext.match(/(?:\bbooking\s*)?([A-Za-z0-9-]{6,20})/i);      // ex.: P10474544
 
-      const params2 = [ booking2 ? `%${booking2}%` : '', container2 ? `%${container2}%` : '' ];
-      const filt2 = companyFilter('op', params2.length + 1, role, companyId);
-      if (filt2.value !== null) params2.push(filt2.value);
+      const container2 = mCont ? sanitizeContainer(mCont[1]) : '';
+      const booking2 = (!mCont && mBook) ? mBook[1] : '';
 
-      const sql2 = `
-        SELECT emb.nome_principal AS embarcador, op.status_operacao,
-               op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
-               op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
-        FROM operacoes op
-        JOIN embarcadores emb ON op.embarcador_id = emb.id
-        WHERE (
-          ($1 <> '' AND op.booking ILIKE $1)
-          OR ($2 <> '' AND REPLACE(REPLACE(op.containers,'-',''),' ','') ILIKE $2)
-        )
-        ${filt2.clause}
-        ORDER BY op.id DESC
-        LIMIT 3;`;
+      // se não achou nada mesmo, deixa cair no fallback padrão
+      if (!container2 && !booking2) {
+        // não retorna aqui: deixa seguir para o fallback padrão do webhook
+      } else {
+        const params2 = [
+          booking2 ? `%${booking2}%` : '',
+          container2 ? `%${container2}%` : ''
+        ];
+        const filt2 = companyFilter('op', params2.length + 1, role, companyId);
+        if (filt2.value !== null) params2.push(filt2.value);
 
-      try {
+        const sql2 = `
+          SELECT emb.nome_principal AS embarcador, op.status_operacao,
+                op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
+                op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
+          FROM operacoes op
+          JOIN embarcadores emb ON op.embarcador_id = emb.id
+          WHERE (
+            ($1 <> '' AND op.booking ILIKE $1)
+            OR ($2 <> '' AND regexp_replace(op.containers, '[^A-Za-z0-9]', '', 'g') ILIKE $2)
+          )
+          ${filt2.clause}
+          ORDER BY op.id DESC
+          LIMIT 3;`;
+
         const { rows } = await db.query(sql2, params2);
-        if (!rows.length) return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código?' });
 
-        const lines = rows.map(r =>
-          `• ${r.tipo_programacao} — ${r.status_operacao || 'Sem status'}\n` +
-          `  Embarcador: ${r.embarcador}\n` +
-          `  Booking: ${r.booking} | Container(s): ${r.containers}\n` +
-          `  Prev/Execução: ${fmtFull(r.dt_inicio_execucao || r.previsao_inicio_atendimento || r.dt_previsao_entrega_recalculada)}`
-        );
-        return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
-      } catch (e) {
-        console.error('Fallback detect error:', e);
+        if (rows.length) {
+          const fmt = (d) => (d ? new Date(d).toLocaleString('pt-BR') : '—');
+          const lines = rows.map(r =>
+            `• ${r.tipo_programacao} — ${r.status_operacao || 'Sem status'}\n` +
+            `  Embarcador: ${r.embarcador}\n` +
+            `  Booking: ${r.booking} | Container(s): ${r.containers}\n` +
+            `  Prev/Execução: ${fmt(r.dt_inicio_execucao || r.previsao_inicio_atendimento || r.dt_previsao_entrega_recalculada)}`
+          );
+          return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
+        }
+
+        // não encontrou nada -> responde de forma amigável
+        return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código?' });
       }
+    } catch (e) {
+      console.error('Plano B (fallback detect) error:', e);
+      // se der erro, deixa cair no fallback padrão logo abaixo
     }
+
 
     // fallback padrão
     const intentOriginal = req.body?.queryResult?.intent?.displayName || '';
@@ -279,8 +322,8 @@ app.post('/webhook/dialogflow', dfHandler);
 // -----------------------------
 app.get('/api/reports/top-ofensores.xlsx', async (req, res) => {
   try {
-    const start = req.query.start ? new Date(req.query.start).toISOString() : new Date(Date.now() - 30*864e5).toISOString();
-    const end   = req.query.end   ? new Date(req.query.end).toISOString()   : new Date().toISOString();
+    const start = req.query.start ? new Date(req.query.start).toISOString() : new Date(Date.now() - 30 * 864e5).toISOString();
+    const end = req.query.end ? new Date(req.query.end).toISOString() : new Date().toISOString();
     const companyId = Number(req.query.companyId || 0);
 
     const params = [start, end];
@@ -306,16 +349,16 @@ app.get('/api/reports/top-ofensores.xlsx', async (req, res) => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Top Ofensores');
     ws.columns = [
-      { header: 'Posição',     key: 'pos',       width: 10 },
-      { header: 'Embarcador',  key: 'embarcador',width: 40 },
-      { header: 'Qtd Atrasos', key: 'qtd',       width: 15 },
-      { header: 'Período',     key: 'periodo',   width: 25 },
+      { header: 'Posição', key: 'pos', width: 10 },
+      { header: 'Embarcador', key: 'embarcador', width: 40 },
+      { header: 'Qtd Atrasos', key: 'qtd', width: 15 },
+      { header: 'Período', key: 'periodo', width: 25 },
     ];
-    rows.forEach((r, i) => ws.addRow({ pos: i+1, embarcador: r.embarcador, qtd: r.qtd, periodo: `${start.slice(0,10)} a ${end.slice(0,10)}` }));
+    rows.forEach((r, i) => ws.addRow({ pos: i + 1, embarcador: r.embarcador, qtd: r.qtd, periodo: `${start.slice(0, 10)} a ${end.slice(0, 10)}` }));
     ws.getRow(1).font = { bold: true };
 
-    res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="top-ofensores_${start.slice(0,10)}_${end.slice(0,10)}.xlsx"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="top-ofensores_${start.slice(0, 10)}_${end.slice(0, 10)}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
   } catch (e) {
@@ -326,8 +369,8 @@ app.get('/api/reports/top-ofensores.xlsx', async (req, res) => {
 
 app.get('/api/reports/atrasos.xlsx', async (req, res) => {
   try {
-    const start = req.query.start ? new Date(req.query.start).toISOString() : new Date(Date.now() - 30*864e5).toISOString();
-    const end   = req.query.end   ? new Date(req.query.end).toISOString()   : new Date().toISOString();
+    const start = req.query.start ? new Date(req.query.start).toISOString() : new Date(Date.now() - 30 * 864e5).toISOString();
+    const end = req.query.end ? new Date(req.query.end).toISOString() : new Date().toISOString();
     const companyId = Number(req.query.companyId || 0);
 
     const params = [start, end];
@@ -348,16 +391,16 @@ app.get('/api/reports/atrasos.xlsx', async (req, res) => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Resumo Atrasos');
     ws.columns = [
-      { header: 'Período',                 key: 'periodo', width: 25 },
-      { header: 'Iniciadas com atraso',    key: 'ini',     width: 22 },
-      { header: 'Não iniciadas e vencidas',key: 'nao',     width: 28 },
-      { header: 'Total',                   key: 'total',   width: 10 },
+      { header: 'Período', key: 'periodo', width: 25 },
+      { header: 'Iniciadas com atraso', key: 'ini', width: 22 },
+      { header: 'Não iniciadas e vencidas', key: 'nao', width: 28 },
+      { header: 'Total', key: 'total', width: 10 },
     ];
-    ws.addRow({ periodo: `${start.slice(0,10)} a ${end.slice(0,10)}`, ini: r.iniciadas_atrasadas, nao: r.nao_iniciadas_atrasadas, total: r.total });
+    ws.addRow({ periodo: `${start.slice(0, 10)} a ${end.slice(0, 10)}`, ini: r.iniciadas_atrasadas, nao: r.nao_iniciadas_atrasadas, total: r.total });
     ws.getRow(1).font = { bold: true };
 
-    res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="atrasos_${start.slice(0,10)}_${end.slice(0,10)}.xlsx"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="atrasos_${start.slice(0, 10)}_${end.slice(0, 10)}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
   } catch (e) {

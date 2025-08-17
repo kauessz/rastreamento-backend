@@ -530,7 +530,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // === Botões de Excel no portal do cliente ===
-const API_BASE_URL = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
+const ADMIN_API_BASE_URL  = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
 
 function todayISO(d = new Date()) { return d.toISOString().slice(0,10); }
 function defaultPeriod() {

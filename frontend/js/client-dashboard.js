@@ -256,3 +256,8 @@ function bindClientReportButtons() {
     openReport('/api/reports/atrasos.xlsx', { start, end, companyId });
   });
 }
+
+// Botão "Sair" no portal do cliente
+document.getElementById('logoutButton')?.addEventListener('click', async () => {
+  try { await firebase.auth().signOut(); } catch (e) { console.error(e); }
+});

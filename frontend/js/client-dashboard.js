@@ -1,12 +1,9 @@
 // ===============================
-// client-dashboard.js — Portal do Cliente
+// client-dashboard.js — Portal do Cliente (corrigido)
 // ===============================
 
-// Base da API: NÃO redeclarar API_BASE_URL; use um alias
-const API_BASE = (typeof window !== 'undefined' && window.API_BASE_URL)
-  ? window.API_BASE_URL
-  : "https://rastreamento-backend-05pi.onrender.com";
-
+// Base da API (sem redeclarar a global)
+const API_BASE = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
 const PAGE_SIZE = 10;
 
 // ====== DARK MODE ======
@@ -34,11 +31,7 @@ const dataPrevisaoFilter = document.getElementById('dataPrevisaoFilter');
 const filterButton = document.getElementById('filterButton');
 const clearFilterButton = document.getElementById('clearFilterButton');
 
-const tableEl =
-  document.getElementById('clientOperationsTable') ||
-  document.getElementById('operationsTable') ||
-  document.querySelector('table');
-
+const tableEl = document.getElementById('clientOperationsTable') || document.getElementById('operationsTable') || document.querySelector('table');
 const tableBodyEl = tableEl ? tableEl.querySelector('tbody') : null;
 const paginationEl = document.getElementById('paginationControls') || document.getElementById('pagination');
 
@@ -47,12 +40,15 @@ let currentToken = null;
 let currentPage = 1;
 let currentFilters = { booking: '', data_previsao: '' };
 
-// Expostos p/ df-messenger
 window.CLIENT_COMPANY_ID = window.CLIENT_COMPANY_ID || 0;
 window.AUTH_EMAIL = window.AUTH_EMAIL || '';
 
 // ====== UTILS ======
-function fmtDateBR(iso) { try { return new Date(iso).toLocaleString('pt-BR'); } catch { return iso || '—'; } }
+function fmtDateBR(v) {
+  if (!v) return 'N/A';
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? 'N/A' : d.toLocaleString('pt-BR');
+}
 function safeText(v) { return (v === null || v === undefined || v === '') ? 'N/A' : String(v); }
 function qs(obj) { const p = new URLSearchParams(); Object.entries(obj).forEach(([k,v]) => (v!==undefined&&v!==null&&v!=='') && p.append(k,v)); return p.toString(); }
 function todayISO(d = new Date()) { return d.toISOString().slice(0,10); }
@@ -62,10 +58,7 @@ async function apiGet(path, withAuth = true) {
   const headers = { 'Content-Type': 'application/json' };
   if (withAuth && currentToken) headers['Authorization'] = `Bearer ${currentToken}`;
   const resp = await fetch(`${API_BASE}${path}`, { headers });
-  if (!resp.ok) {
-    const msg = (await resp.text()) || `HTTP ${resp.status}`;
-    throw new Error(msg);
-  }
+  if (!resp.ok) throw new Error((await resp.text()) || `HTTP ${resp.status}`);
   return resp.json();
 }
 
@@ -96,10 +89,10 @@ async function resolveClientCompanyId() {
     if (profile && Number(profile.embarcador_id) > 0) {
       window.CLIENT_COMPANY_ID = Number(profile.embarcador_id);
       if (!window.AUTH_EMAIL && profile.email) window.AUTH_EMAIL = profile.email;
+      return;
     }
-  } catch (e) {
-    console.warn('Endpoint /api/client/profile indisponível:', e);
-  }
+  } catch (e) { console.warn('Endpoint /api/client/profile indisponível:', e); }
+  console.warn('CLIENT_COMPANY_ID indefinido. Defina no HTML ou exponha /api/client/profile.');
 }
 
 // ====== KPIs ======
@@ -120,8 +113,8 @@ async function fetchClientOperations(page = 1, filters = {}) {
 
   const baseParams = { page, pageSize: PAGE_SIZE, ...currentFilters };
   if (Number(window.CLIENT_COMPANY_ID) > 0) baseParams.companyId = Number(window.CLIENT_COMPANY_ID);
-
   const query = qs(baseParams);
+
   try {
     const payload = await apiGet(`/api/client/operations?${query}`);
     const list = payload.items || payload.rows || payload.data || [];
@@ -130,9 +123,7 @@ async function fetchClientOperations(page = 1, filters = {}) {
     renderPagination(total, page, PAGE_SIZE);
   } catch (e) {
     console.error('Erro ao buscar operações:', e);
-    if (tableBodyEl) {
-      tableBodyEl.innerHTML = `<tr><td colspan="6" style="color:red;">${e.message}</td></tr>`;
-    }
+    if (tableBodyEl) tableBodyEl.innerHTML = `<tr><td colspan="6" style="color:red;">${e.message}</td></tr>`;
     renderPagination(0, 1, PAGE_SIZE);
   }
 }
@@ -149,22 +140,20 @@ function renderTable(items) {
   }
 
   items.forEach((op) => {
+    // linha principal (6 colunas)
     const tr = document.createElement('tr');
     tr.className = 'operation-row';
-
-    // 6 colunas
-    const cols = [
+    [
       safeText(op.booking),
       safeText(op.containers),
       safeText(op.status_operacao || op.status || 'N/A'),
       fmtDateBR(op.previsao_inicio_atendimento),
       fmtDateBR(op.dt_inicio_execucao),
       fmtDateBR(op.dt_fim_execucao)
-    ];
-
-    cols.forEach((c) => { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); });
+    ].forEach((c) => { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); });
     tableBodyEl.appendChild(tr);
 
+    // linha de detalhes
     const detailsRow = document.createElement('tr');
     detailsRow.className = 'details-row hidden';
     const detailsTd = document.createElement('td');
@@ -199,39 +188,26 @@ function renderPagination(total, page, pageSize) {
     </div>`;
 }
 
-// ====== EVENTOS ======
-filterButton?.addEventListener('click', () => {
-  fetchClientOperations(1, {
-    booking: bookingFilter ? bookingFilter.value : '',
-    data_previsao: dataPrevisaoFilter ? dataPrevisaoFilter.value : ''
-  });
+// Toggle de detalhes: clique na linha principal
+tableBodyEl?.addEventListener('click', (e) => {
+  const row = e.target.closest('tr.operation-row');
+  if (!row) return;
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains('details-row')) {
+    next.classList.toggle('hidden');
+  }
 });
 
-clearFilterButton?.addEventListener('click', () => {
-  if (bookingFilter) bookingFilter.value = '';
-  if (dataPrevisaoFilter) dataPrevisaoFilter.value = '';
-  fetchClientOperations(1, { booking: '', data_previsao: '' });
-});
-
-paginationEl?.addEventListener('click', (e) => {
-  const btn = e.target.closest('button[data-goto]');
-  if (!btn) return;
-  const goto = Number(btn.getAttribute('data-goto') || '1');
-  fetchClientOperations(goto, currentFilters);
-});
-
-// "Perguntar ao Assistente"
+// “Perguntar ao Assistente”
 document.body.addEventListener('click', async (e) => {
-  const btn = e.target.closest('.ask-assistant');
-  if (!btn) return;
+  const btn = e.target.closest('.ask-assistant'); if (!btn) return;
   const q = btn.dataset.query || 'ajuda';
   try { await navigator.clipboard.writeText(q); } catch {}
-  if (window.openAssistant) window.openAssistant();
-  else document.querySelector('df-messenger')?.setAttribute('expanded', 'true');
+  document.querySelector('df-messenger')?.setAttribute('expanded', 'true');
   alert('Abri o assistente. Cole a pergunta e envie:\n\n' + q);
 });
 
-// ====== Botões de EXCEL ======
+// ====== Botões de EXCEL (Cliente) ======
 function getPeriodClient() {
   const s = document.getElementById('repStartClient')?.value;
   const e = document.getElementById('repEndClient')?.value;
@@ -257,7 +233,7 @@ function bindClientReportButtons() {
   });
 }
 
-// Botão "Sair" no portal do cliente
+// Botão “Sair”
 document.getElementById('logoutButton')?.addEventListener('click', async () => {
   try { await firebase.auth().signOut(); } catch (e) { console.error(e); }
 });

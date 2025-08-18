@@ -1,7 +1,12 @@
 // ===============================
-// client-dashboard.js — Portal do Cliente (versão completa)
+// client-dashboard.js — Portal do Cliente
 // ===============================
-const API_BASE_URL = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
+
+// Base da API: NÃO redeclarar API_BASE_URL; use um alias
+const API_BASE = (typeof window !== 'undefined' && window.API_BASE_URL)
+  ? window.API_BASE_URL
+  : "https://rastreamento-backend-05pi.onrender.com";
+
 const PAGE_SIZE = 10;
 
 // ====== DARK MODE ======
@@ -29,17 +34,20 @@ const dataPrevisaoFilter = document.getElementById('dataPrevisaoFilter');
 const filterButton = document.getElementById('filterButton');
 const clearFilterButton = document.getElementById('clearFilterButton');
 
-const tableEl = document.getElementById('clientOperationsTable');
+const tableEl =
+  document.getElementById('clientOperationsTable') ||
+  document.getElementById('operationsTable') ||
+  document.querySelector('table');
+
 const tableBodyEl = tableEl ? tableEl.querySelector('tbody') : null;
-const paginationEl = document.getElementById('paginationControls');
+const paginationEl = document.getElementById('paginationControls') || document.getElementById('pagination');
 
 // ====== ESTADO ======
-let currentUser = null;
 let currentToken = null;
 let currentPage = 1;
 let currentFilters = { booking: '', data_previsao: '' };
 
-// Expostos globalmente p/ HTML (df-messenger)
+// Expostos p/ df-messenger
 window.CLIENT_COMPANY_ID = window.CLIENT_COMPANY_ID || 0;
 window.AUTH_EMAIL = window.AUTH_EMAIL || '';
 
@@ -53,7 +61,7 @@ function defaultPeriod() { const end = new Date(); const start = new Date(Date.n
 async function apiGet(path, withAuth = true) {
   const headers = { 'Content-Type': 'application/json' };
   if (withAuth && currentToken) headers['Authorization'] = `Bearer ${currentToken}`;
-  const resp = await fetch(`${API_BASE_URL}${path}`, { headers });
+  const resp = await fetch(`${API_BASE}${path}`, { headers });
   if (!resp.ok) {
     const msg = (await resp.text()) || `HTTP ${resp.status}`;
     throw new Error(msg);
@@ -64,24 +72,19 @@ async function apiGet(path, withAuth = true) {
 // ====== FIREBASE AUTH ======
 firebase.auth().onAuthStateChanged(async (user) => {
   if (!user) { window.location.href = 'login.html'; return; }
-  currentUser = user;
   if (userEmailEl) userEmailEl.textContent = `Olá, ${user.email}`;
   window.AUTH_EMAIL = user.email;
 
   try { currentToken = await user.getIdToken(); }
   catch (e) { console.error('Erro ao obter token:', e); window.location.href = 'login.html'; return; }
 
-  // Busca o embarcador do cliente
   await resolveClientCompanyId();
 
-  // período padrão (Excel)
   const def = defaultPeriod();
   document.getElementById('repStartClient')?.setAttribute('value', def.start);
   document.getElementById('repEndClient')?.setAttribute('value', def.end);
-
   bindClientReportButtons();
 
-  // KPIs + Tabela
   await fetchClientKpis();
   await fetchClientOperations(1, currentFilters);
 });
@@ -89,16 +92,14 @@ firebase.auth().onAuthStateChanged(async (user) => {
 async function resolveClientCompanyId() {
   if (Number(window.CLIENT_COMPANY_ID) > 0) return;
   try {
-    const profile = await apiGet('/api/client/profile'); // { embarcador_id, email, ... }
+    const profile = await apiGet('/api/client/profile');
     if (profile && Number(profile.embarcador_id) > 0) {
       window.CLIENT_COMPANY_ID = Number(profile.embarcador_id);
       if (!window.AUTH_EMAIL && profile.email) window.AUTH_EMAIL = profile.email;
-      return;
     }
   } catch (e) {
     console.warn('Endpoint /api/client/profile indisponível:', e);
   }
-  console.warn('CLIENT_COMPANY_ID indefinido. Defina no HTML ou exponha /api/client/profile.');
 }
 
 // ====== KPIs ======
@@ -121,7 +122,6 @@ async function fetchClientOperations(page = 1, filters = {}) {
   if (Number(window.CLIENT_COMPANY_ID) > 0) baseParams.companyId = Number(window.CLIENT_COMPANY_ID);
 
   const query = qs(baseParams);
-
   try {
     const payload = await apiGet(`/api/client/operations?${query}`);
     const list = payload.items || payload.rows || payload.data || [];
@@ -152,7 +152,7 @@ function renderTable(items) {
     const tr = document.createElement('tr');
     tr.className = 'operation-row';
 
-    // ALINHADO ao HTML: 6 colunas
+    // 6 colunas
     const cols = [
       safeText(op.booking),
       safeText(op.containers),
@@ -220,27 +220,18 @@ paginationEl?.addEventListener('click', (e) => {
   fetchClientOperations(goto, currentFilters);
 });
 
-// Toggle details
-tableBodyEl?.addEventListener('click', (e) => {
-  const toggle = e.target.closest('.toggle-details');
-  if (!toggle) return;
-  const row = toggle.closest('tr');
-  const next = row.nextElementSibling;
-  if (next && next.classList.contains('details-row')) next.classList.toggle('hidden');
-});
-
 // "Perguntar ao Assistente"
 document.body.addEventListener('click', async (e) => {
   const btn = e.target.closest('.ask-assistant');
   if (!btn) return;
   const q = btn.dataset.query || 'ajuda';
-  try { await navigator.clipboard.writeText(q); } catch (_) {}
+  try { await navigator.clipboard.writeText(q); } catch {}
   if (window.openAssistant) window.openAssistant();
   else document.querySelector('df-messenger')?.setAttribute('expanded', 'true');
   alert('Abri o assistente. Cole a pergunta e envie:\n\n' + q);
 });
 
-// ====== Botões de EXCEL (Cliente) ======
+// ====== Botões de EXCEL ======
 function getPeriodClient() {
   const s = document.getElementById('repStartClient')?.value;
   const e = document.getElementById('repEndClient')?.value;
@@ -249,7 +240,7 @@ function getPeriodClient() {
 }
 function openReport(path, params) {
   const q = new URLSearchParams(params).toString();
-  window.open(`${API_BASE_URL}${path}?${q}`, '_blank');
+  window.open(`${API_BASE}${path}?${q}`, '_blank');
 }
 function bindClientReportButtons() {
   const btnTop = document.getElementById('btnExcelTopClient');

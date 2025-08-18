@@ -1,7 +1,12 @@
+// src/middlewares/authMiddleware.js
 const admin = require('../config/firebase');
 
 const authMiddleware = async (req, res, next) => {
-  const token = req.headers.authorization?.split('Bearer ')[1];
+  if (req.method === 'OPTIONS') return next(); // preflight passa
+
+  const auth = req.headers.authorization || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  const token = m && m[1];
 
   if (!token) {
     return res.status(401).json({ message: 'Não autorizado: Token não fornecido.' });
@@ -9,7 +14,7 @@ const authMiddleware = async (req, res, next) => {
 
   try {
     const decodedToken = await admin.auth().verifyIdToken(token);
-    req.user = decodedToken; // Adiciona os dados do usuário do firebase à requisição
+    req.user = decodedToken;
     next();
   } catch (error) {
     console.error('Erro na verificação do token:', error);

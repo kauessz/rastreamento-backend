@@ -30,6 +30,13 @@ themeToggle?.addEventListener('change', () => {
   localStorage.setItem('theme', body.classList.contains('dark-mode') ? 'dark-mode' : 'light-mode');
 });
 
+// ======= HELPERS AUTH =======
+async function getFreshToken(user) {
+  try { return await user.getIdToken(); } catch (_) {}
+  try { return await user.getIdToken(true); } catch (_) {}
+  try { await user.reload(); return await user.getIdToken(true); } catch (e) { throw e; }
+}
+
 // ======= ON LOAD =======
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -63,15 +70,28 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentSort = { column: 'previsao_inicio_atendimento', order: 'desc' };
 
   // ======= AUTH =======
+  const auth = (window.auth || firebase.auth());
   auth.onAuthStateChanged(async (user) => {
     if (!user) { window.location.href = 'login.html'; return; }
-    userEmail.textContent = user.email;
+
+    if (userEmail) userEmail.textContent = user.email;
     try {
-      currentToken = await user.getIdToken();
+      currentToken = await getFreshToken(user);
       loadInitialData();
     } catch (e) {
-      console.error('Erro ao obter token:', e);
-      window.location.href = 'login.html';
+      console.error('Falha ao obter ID token:', e);
+      setTimeout(async () => {
+        const u = (window.auth || firebase.auth()).currentUser;
+        if (!u) { window.location.href = 'login.html'; return; }
+        try {
+          currentToken = await getFreshToken(u);
+          loadInitialData();
+        } catch {
+          alert('Não consegui confirmar sua sessão. Faça login novamente.');
+          try { await auth.signOut(); } catch {}
+          window.location.href = 'login.html';
+        }
+      }, 1200);
     }
   });
 
@@ -84,7 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
     populateEmbarcadorFilter();
     fetchAndRenderKpis(filters);
 
-    // Preenche período padrão da barra de relatórios
+    // Período padrão da barra de relatórios
     const def = adminDefaultPeriod();
     document.getElementById('repStart')?.setAttribute('value', def.start);
     document.getElementById('repEnd')?.setAttribute('value', def.end);

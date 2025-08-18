@@ -1,15 +1,6 @@
 // ===============================
 // client-dashboard.js — Portal do Cliente (versão completa)
 // ===============================
-// - Dark mode
-// - Login Firebase
-// - KPIs + Tabela com filtros e paginação
-// - Integração com Assistente (Dialogflow Messenger):
-//   * Define session-id no HTML como client:<companyId>:<email>
-//   * Este JS preenche window.CLIENT_COMPANY_ID e window.AUTH_EMAIL
-// - Botões para baixar Excel: Top 10 e Resumo de Atrasos
-//
-// Backend alvo
 const API_BASE_URL = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
 const PAGE_SIZE = 10;
 
@@ -21,20 +12,16 @@ if (savedTheme) {
   body.classList.add(savedTheme);
   if (savedTheme === 'dark-mode' && themeToggle) themeToggle.checked = true;
 }
-if (themeToggle) {
-  themeToggle.addEventListener('change', () => {
-    body.classList.toggle('dark-mode');
-    localStorage.setItem('theme', body.classList.contains('dark-mode') ? 'dark-mode' : 'light-mode');
-  });
-}
+themeToggle?.addEventListener('change', () => {
+  body.classList.toggle('dark-mode');
+  localStorage.setItem('theme', body.classList.contains('dark-mode') ? 'dark-mode' : 'light-mode');
+});
 
 // ====== ELEMENTOS ======
 const userEmailEl = document.getElementById('userEmail');
 const kpiTotalEl = document.querySelector('#kpi-total .kpi-value');
 const kpiOnTimeEl = document.querySelector('#kpi-ontime .kpi-value');
-// CORRIGIDO: O ID no HTML é 'kpi-atrasadas', não 'kpiLate'
-const kpiLateEl = document.querySelector('#kpi-atrasadas .kpi-value'); 
-// CORRIGIDO: O ID no HTML é 'kpi-percentual', não 'kpiLatePct'
+const kpiLateEl = document.querySelector('#kpi-atrasadas .kpi-value');
 const kpiLatePctEl = document.querySelector('#kpi-percentual .kpi-value');
 
 const bookingFilter = document.getElementById('bookingFilter');
@@ -43,9 +30,8 @@ const filterButton = document.getElementById('filterButton');
 const clearFilterButton = document.getElementById('clearFilterButton');
 
 const tableEl = document.getElementById('clientOperationsTable');
-//const tableEl = document.querySelector('clientOperationsTable') || document.querySelector('table');
 const tableBodyEl = tableEl ? tableEl.querySelector('tbody') : null;
-const paginationEl = document.getElementById('paginationControls') || document.getElementById('pagination');
+const paginationEl = document.getElementById('paginationControls');
 
 // ====== ESTADO ======
 let currentUser = null;
@@ -53,8 +39,8 @@ let currentToken = null;
 let currentPage = 1;
 let currentFilters = { booking: '', data_previsao: '' };
 
-// Expostos globalmente p/ HTML do df-messenger
-window.CLIENT_COMPANY_ID = window.CLIENT_COMPANY_ID || 0; // será preenchido por /api/client/profile
+// Expostos globalmente p/ HTML (df-messenger)
+window.CLIENT_COMPANY_ID = window.CLIENT_COMPANY_ID || 0;
 window.AUTH_EMAIL = window.AUTH_EMAIL || '';
 
 // ====== UTILS ======
@@ -68,7 +54,10 @@ async function apiGet(path, withAuth = true) {
   const headers = { 'Content-Type': 'application/json' };
   if (withAuth && currentToken) headers['Authorization'] = `Bearer ${currentToken}`;
   const resp = await fetch(`${API_BASE_URL}${path}`, { headers });
-  if (!resp.ok) throw new Error((await resp.text()) || `HTTP ${resp.status}`);
+  if (!resp.ok) {
+    const msg = (await resp.text()) || `HTTP ${resp.status}`;
+    throw new Error(msg);
+  }
   return resp.json();
 }
 
@@ -77,45 +66,38 @@ firebase.auth().onAuthStateChanged(async (user) => {
   if (!user) { window.location.href = 'login.html'; return; }
   currentUser = user;
   if (userEmailEl) userEmailEl.textContent = `Olá, ${user.email}`;
-  window.AUTH_EMAIL = user.email; // usado pelo df-messenger no HTML
+  window.AUTH_EMAIL = user.email;
 
   try { currentToken = await user.getIdToken(); }
   catch (e) { console.error('Erro ao obter token:', e); window.location.href = 'login.html'; return; }
 
-  // Descobre o companyId do cliente (preenche window.CLIENT_COMPANY_ID)
+  // Busca o embarcador do cliente
   await resolveClientCompanyId();
 
-  // Preenche período padrão nos inputs (se existirem)
+  // período padrão (Excel)
   const def = defaultPeriod();
   document.getElementById('repStartClient')?.setAttribute('value', def.start);
   document.getElementById('repEndClient')?.setAttribute('value', def.end);
 
-  // Vincula botões de Excel
   bindClientReportButtons();
 
-  // Carrega KPIs e tabela
+  // KPIs + Tabela
   await fetchClientKpis();
   await fetchClientOperations(1, currentFilters);
 });
 
 async function resolveClientCompanyId() {
-  // 1) Se já está definido no HTML, respeita
   if (Number(window.CLIENT_COMPANY_ID) > 0) return;
-
-  // 2) Busca do backend (requer authMiddleware no servidor)
   try {
     const profile = await apiGet('/api/client/profile'); // { embarcador_id, email, ... }
     if (profile && Number(profile.embarcador_id) > 0) {
       window.CLIENT_COMPANY_ID = Number(profile.embarcador_id);
-      // opcional: sincroniza email
       if (!window.AUTH_EMAIL && profile.email) window.AUTH_EMAIL = profile.email;
       return;
     }
   } catch (e) {
     console.warn('Endpoint /api/client/profile indisponível:', e);
   }
-
-  // 3) Sem companyId, mantém 0 (assistente não filtrará por empresa). Defina via HTML se precisar.
   console.warn('CLIENT_COMPANY_ID indefinido. Defina no HTML ou exponha /api/client/profile.');
 }
 
@@ -123,7 +105,6 @@ async function resolveClientCompanyId() {
 async function fetchClientKpis() {
   try {
     const data = await apiGet(`/api/client/kpis`);
-    // Agora as atribuições funcionarão corretamente
     if (kpiTotalEl) kpiTotalEl.textContent = safeText(data.total_operacoes);
     if (kpiOnTimeEl) kpiOnTimeEl.textContent = safeText(data.operacoes_on_time);
     if (kpiLateEl) kpiLateEl.textContent = safeText(data.operacoes_atrasadas);
@@ -135,7 +116,12 @@ async function fetchClientKpis() {
 async function fetchClientOperations(page = 1, filters = {}) {
   currentPage = page;
   currentFilters = { booking: (filters.booking || '').trim(), data_previsao: (filters.data_previsao || '').trim() };
-  const query = qs({ page, pageSize: PAGE_SIZE, ...currentFilters });
+
+  const baseParams = { page, pageSize: PAGE_SIZE, ...currentFilters };
+  if (Number(window.CLIENT_COMPANY_ID) > 0) baseParams.companyId = Number(window.CLIENT_COMPANY_ID);
+
+  const query = qs(baseParams);
+
   try {
     const payload = await apiGet(`/api/client/operations?${query}`);
     const list = payload.items || payload.rows || payload.data || [];
@@ -144,7 +130,9 @@ async function fetchClientOperations(page = 1, filters = {}) {
     renderPagination(total, page, PAGE_SIZE);
   } catch (e) {
     console.error('Erro ao buscar operações:', e);
-    renderTable([]);
+    if (tableBodyEl) {
+      tableBodyEl.innerHTML = `<tr><td colspan="6" style="color:red;">${e.message}</td></tr>`;
+    }
     renderPagination(0, 1, PAGE_SIZE);
   }
 }
@@ -155,7 +143,7 @@ function renderTable(items) {
   if (!items || !items.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 10; td.textContent = 'Nenhuma operação encontrada.';
+    td.colSpan = 6; td.textContent = 'Nenhuma operação encontrada.';
     tr.appendChild(td); tableBodyEl.appendChild(tr);
     return;
   }
@@ -164,29 +152,23 @@ function renderTable(items) {
     const tr = document.createElement('tr');
     tr.className = 'operation-row';
 
+    // ALINHADO ao HTML: 6 colunas
     const cols = [
-      safeText(op.numero_programacao),
-      safeText(op.tipo_programacao),
-      safeText(op.embarcador_nome || op.embarcador || ''),
       safeText(op.booking),
       safeText(op.containers),
-      safeText(op.status_operacao),
+      safeText(op.status_operacao || op.status || 'N/A'),
       fmtDateBR(op.previsao_inicio_atendimento),
       fmtDateBR(op.dt_inicio_execucao),
       fmtDateBR(op.dt_fim_execucao)
     ];
 
     cols.forEach((c) => { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); });
-
-    const tdActions = document.createElement('td');
-    tdActions.innerHTML = `<button class="toggle-details">Detalhes</button>`;
-    tr.appendChild(tdActions);
     tableBodyEl.appendChild(tr);
 
     const detailsRow = document.createElement('tr');
     detailsRow.className = 'details-row hidden';
     const detailsTd = document.createElement('td');
-    detailsTd.colSpan = 10;
+    detailsTd.colSpan = 6;
     detailsTd.innerHTML = `
       <div class="details-wrapper">
         <span><strong>Nº Programação:</strong> ${safeText(op.numero_programacao)}</span>
@@ -239,15 +221,13 @@ paginationEl?.addEventListener('click', (e) => {
 });
 
 // Toggle details
-if (tableBodyEl) {
-  tableBodyEl.addEventListener('click', (e) => {
-    const toggle = e.target.closest('.toggle-details');
-    if (!toggle) return;
-    const row = toggle.closest('tr');
-    const next = row.nextElementSibling;
-    if (next && next.classList.contains('details-row')) next.classList.toggle('hidden');
-  });
-}
+tableBodyEl?.addEventListener('click', (e) => {
+  const toggle = e.target.closest('.toggle-details');
+  if (!toggle) return;
+  const row = toggle.closest('tr');
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains('details-row')) next.classList.toggle('hidden');
+});
 
 // "Perguntar ao Assistente"
 document.body.addEventListener('click', async (e) => {
@@ -255,12 +235,8 @@ document.body.addEventListener('click', async (e) => {
   if (!btn) return;
   const q = btn.dataset.query || 'ajuda';
   try { await navigator.clipboard.writeText(q); } catch (_) {}
-  if (window.openAssistant) {
-    window.openAssistant();
-  } else {
-    const df = document.querySelector('df-messenger');
-    if (df) df.setAttribute('expanded', 'true');
-  }
+  if (window.openAssistant) window.openAssistant();
+  else document.querySelector('df-messenger')?.setAttribute('expanded', 'true');
   alert('Abri o assistente. Cole a pergunta e envie:\n\n' + q);
 });
 

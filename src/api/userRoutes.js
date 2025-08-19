@@ -17,6 +17,10 @@ router.get('/admin/pending', authMiddleware, isAdmin, userController.getPendingU
 // Rota para o usuário logado buscar seu próprio perfil (role, status, etc.)
 router.get('/me', authMiddleware, userController.getCurrentUserProfile);
 
+// além de /admin/pending, exponha também /pending
+router.get('/pending', authMiddleware, isAdmin, userController.getPendingUsers);
+
+
 // Rota para admin aprovar um usuário. Protegida.
 // O :id na URL é um parâmetro dinâmico
 router.put('/admin/approve/:id', authMiddleware, isAdmin, userController.approveUser);

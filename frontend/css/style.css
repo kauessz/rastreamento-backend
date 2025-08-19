@@ -100,6 +100,7 @@ body.dark-mode .operations-table th[data-sort]:hover { background-color: #3a3a3a
 .details-content { background-color: var(--cor-fundo); }
 .details-wrapper { display: flex; flex-wrap: wrap; gap: 25px; padding: 15px; justify-content: space-between; }
 .details-wrapper span { font-size: 14px; }
+.hidden { display: none !important; }
 
 /* Paginação */
 #paginationControls { margin-top: 20px; display: flex; justify-content: center; align-items: center; gap: 15px; }
@@ -288,3 +289,11 @@ input:focus-visible, select:focus-visible{
   animation: shimmer 1.2s infinite;
 }
 @keyframes shimmer{ to{ transform: translateX(100%); } }
+
+/* ==== suporte aos detalhes da tabela ==== */
+.details-row { display: none; }
+.details-row.visible { display: table-row; }      /* é isso que o JS alterna */
+.details-content { background-color: var(--cor-fundo); }
+.details-wrapper { display:flex; flex-wrap:wrap; gap:24px; padding:12px; }
+.hidden { display: none !important; }             /* caso opte por usar .hidden */
+

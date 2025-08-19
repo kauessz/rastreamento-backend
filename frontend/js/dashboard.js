@@ -1,3 +1,4 @@
+// dashboard.js
 (() => {
   const API_BASE = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
 
@@ -31,7 +32,7 @@
     try {
       currentToken = await getFreshToken(user);
 
-      // ✅ sem optional chaining no lado esquerdo
+      // sem optional chaining na esquerda
       const el = document.getElementById('userEmail');
       if (el) el.textContent = user.email;
 
@@ -75,17 +76,20 @@
   let currentSort = { column: 'previsao_inicio_atendimento', order: 'desc' };
   let masterEmbarcadoresList = [];
 
-  // ===== Pending users (novo)
+  // ===== Pending users (silencia 404)
   async function fetchPendingUsers() {
     const box = document.getElementById('pendingUsersList');
     if (!box) return;
     try {
-      const r = await fetch(`${API_BASE}/api/users/pending`, { headers: { Authorization: `Bearer ${currentToken}` } });
-      if (!r.ok) { box.innerHTML = '<p>—</p>'; return; }
+      const r = await fetch(`${API_BASE}/api/users/pending`, {
+        headers: { Authorization: `Bearer ${currentToken}` }
+      });
+      if (r.status === 404) { box.innerHTML = '—'; return; }
+      if (!r.ok) { box.innerHTML = '—'; return; }
       const data = await r.json();
-      if (!Array.isArray(data) || !data.length) { box.innerHTML = '<p>Nenhum usuário aguardando.</p>'; return; }
-      box.innerHTML = data.map(u => `<div class="pending-user"><span>${u.email}</span></div>`).join('');
-    } catch { box.innerHTML = '<p>—</p>'; }
+      if (!Array.isArray(data) || !data.length) { box.innerHTML = '—'; return; }
+      box.innerHTML = data.map(u => `<div>${u.email}</div>`).join('');
+    } catch { box.innerHTML = '—'; }
   }
 
   // ===== Filtros
@@ -179,7 +183,8 @@
     try {
       const r = await fetch(`${API_BASE}/api/embarcadores/aliases`, { headers: { Authorization: `Bearer ${currentToken}` } });
       let aliases = await r.json(); if (!r.ok) throw new Error(aliases?.message || 'Erro ao listar aliases.');
-      aliases = (aliases || []).filter(a => !a.mestre_id && !a.mestre_nome); renderAliasesTable(aliases);
+      aliases = (aliases || []).filter(a => !a.mestre_id && !a.mestre_nome);
+      renderAliasesTable(aliases);
     } catch (e) { console.error(e); aliasesTableBody.innerHTML = `<tr><td colspan="4" style="color:red;">Erro ao listar aliases.</td></tr>`; }
   }
   function renderAliasesTable(aliases) {
@@ -257,4 +262,4 @@
     document.getElementById('btnExcelTop')?.addEventListener('click', () => { const { start, end } = getAdminPeriod(); openAdminReport('/api/reports/top-ofensores.xlsx', { start, end }); });
     document.getElementById('btnExcelAtrasos')?.addEventListener('click', () => { const { start, end } = getAdminPeriod(); openAdminReport('/api/reports/atrasos.xlsx', { start, end }); });
   })();
-})();
+});

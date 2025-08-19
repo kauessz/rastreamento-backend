@@ -58,8 +58,6 @@ exports.registerUser = async (req, res) => {
   }
 };
 
-// Adicione no final do arquivo src/controllers/userController.js
-
 // Função para listar todos os usuários com status 'pendente'
 exports.getPendingUsers = async (req, res) => {
   try {

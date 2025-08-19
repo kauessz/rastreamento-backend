@@ -1,21 +1,24 @@
-// server.js — atualizado (escopo por empresa + Plano B + Excel)
+// src/server.js
 require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const ExcelJS = require('exceljs');
 
+// Pool do Postgres
 const db = require('./config/database');
 
-const userRoutes = require('./api/userRoutes');
-const operationRoutes = require('./api/operationRoutes');
-const embarcadorRoutes = require('./api/embarcadorRoutes');
-const dashboardRoutes = require('./api/dashboardRoutes');
-const clientRoutes = require('./api/clientRoutes');
+// Rotas
+const userRoutes        = require('./api/userRoutes');
+const operationRoutes   = require('./api/operationRoutes');
+const embarcadorRoutes  = require('./api/embarcadorRoutes');
+const dashboardRoutes   = require('./api/dashboardRoutes');
+const clientRoutes      = require('./api/clientRoutes');
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(cors());
+
+// CORS liberal (frontend Netlify + Messenger)
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
 // log simples
@@ -88,9 +91,10 @@ const dfHandler = async (req, res) => {
     const intentName = (req.body?.queryResult?.intent?.displayName || '').replace(/\s+/g, '');
     const p = req.body?.queryResult?.parameters || {};
 
-    const booking = (p.booking || p.booking_code || p['booking-code'] || '').toString().trim();
-    const containerRaw = (p.container || p.container_code || p['container-code'] || '').toString().trim();
-    const container = containerRaw.replace(/\s|-/g, '');
+    // parâmetros normalizados para booking/container
+    const booking   = (p.booking || p.booking_code || p['booking-code'] || '').toString().trim();
+    const contRaw   = (p.container || p.container_code || p['container-code'] || '').toString().trim();
+    const container = sanitizeContainer(contRaw);
 
     // health
     if (intentName === 'Ping') {
@@ -101,64 +105,50 @@ const dfHandler = async (req, res) => {
     // RastrearCarga
     // -----------------
     if (intentName === 'RastrearCarga') {
-      const qtext = (req.body?.queryResult?.queryText || '').trim();
-
-      let bookingVal = (p.booking || p.booking_code || p['booking-code'] || '').toString().trim();
-      let containerVal = sanitizeContainer((p.container || p.container_code || p['container-code'] || '').toString().trim());
-
-      // se a intent não preencheu parâmetros, tenta pegar do texto
-      if (!bookingVal && !containerVal) {
-        const mCont = qtext.match(CONTAINER_RE);
-        if (mCont) {
-          containerVal = sanitizeContainer(mCont[1]);
-        } else {
-          // como fallback leve, tenta capturar um token “parecendo booking”
-          const mBook = qtext.match(/\b([A-Za-z0-9-]{6,20})\b/);
-          if (mBook) bookingVal = mBook[1];
-        }
-      }
-
-      if (!bookingVal && !containerVal) {
+      if (!booking && !container) {
         return res.json({ fulfillmentText: 'Me diga o *booking* ou o número do *container* para eu rastrear 🙂' });
       }
 
-      try {
-        const params = [
-          bookingVal ? `%${bookingVal}%` : '',
-          containerVal ? `%${containerVal}%` : ''
-        ];
-        const filt = companyFilter('op', params.length + 1, role, companyId);
-        if (filt.value !== null) params.push(filt.value);
+      const filter = companyFilter('op', 3, role, companyId);
+      const sql = `
+        SELECT emb.nome_principal AS embarcador, op.status_operacao,
+               op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
+               op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
+          FROM operacoes op
+          JOIN embarcadores emb ON op.embarcador_id = emb.id
+         WHERE (($1 <> '' AND op.booking ILIKE $1)
+             OR  ($2 <> '' AND REPLACE(REPLACE(op.containers,'-',''),' ','') ILIKE $2))
+               ${filter.clause}
+        ORDER BY op.id DESC
+        LIMIT 3;
+      `;
+      const params = [
+        booking ? `%${booking}%` : '',
+        container ? `%${container}%` : ''
+      ];
+      if (filter.value !== null) params.push(filter.value);
 
-        const sql = `
-      SELECT emb.nome_principal AS embarcador, op.status_operacao,
-             op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
-             op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
-      FROM operacoes op
-      JOIN embarcadores emb ON op.embarcador_id = emb.id
-      WHERE (
-        ($1 <> '' AND op.booking ILIKE $1)
-        OR ($2 <> '' AND regexp_replace(op.containers, '[^A-Za-z0-9]', '', 'g') ILIKE $2)
-      )
-      ${filt.clause}
-      ORDER BY op.id DESC
-      LIMIT 3;`;
-
-        const { rows } = await db.query(sql, params);
-        if (!rows.length) return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código?' });
-
-        const fmt = (d) => (d ? new Date(d).toLocaleString('pt-BR') : '—');
-        const lines = rows.map(r =>
-          `• ${r.tipo_programacao} — ${r.status_operacao || 'Sem status'}\n` +
-          `  Embarcador: ${r.embarcador}\n` +
-          `  Booking: ${r.booking} | Container(s): ${r.containers}\n` +
-          `  Prev/Execução: ${fmt(r.dt_inicio_execucao || r.previsao_inicio_atendimento || r.dt_previsao_entrega_recalculada)}`
-        );
-        return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
-      } catch (e) {
-        console.error('RastrearCarga error:', e);
-        return res.json({ fulfillmentText: 'Deu algo errado por aqui. Tenta de novo, por favor 🙏' });
+      const { rows } = await db.query(sql, params);
+      if (!rows.length) {
+        return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código pra mim?' });
       }
+
+      const lines = rows.map(r => {
+        const pre = r.previsao_inicio_atendimento ? new Date(r.previsao_inicio_atendimento).toLocaleString('pt-BR') : 'N/A';
+        const ini = r.dt_inicio_execucao ? new Date(r.dt_inicio_execucao).toLocaleString('pt-BR') : 'N/A';
+        const fim = r.dt_fim_execucao ? new Date(r.dt_fim_execucao).toLocaleString('pt-BR') : 'N/A';
+        const rec = r.dt_previsao_entrega_recalculada ? new Date(r.dt_previsao_entrega_recalculada).toLocaleString('pt-BR') : 'N/A';
+        return `• **${r.tipo_programacao} — ${r.status_operacao}**
+          Embarcador: ${r.embarcador}
+          Booking: ${r.booking} | Contêiner(es): ${r.containers}
+          Prev/Atend: ${pre}
+          Início: ${ini} | Fim: ${fim}
+          Prev. Entrega (recalc): ${rec}`;
+      });
+
+      return res.json({
+        fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}`
+      });
     }
 
 
@@ -314,7 +304,6 @@ const dfHandler = async (req, res) => {
 };
 
 // rotas do webhook
-app.post('/api/webhook/dialogflow', dfHandler);
 app.post('/webhook/dialogflow', dfHandler);
 
 // -----------------------------
@@ -409,18 +398,24 @@ app.get('/api/reports/atrasos.xlsx', async (req, res) => {
   }
 });
 
-// -----------------------------
-// demais rotas da sua API
-// -----------------------------
+// endpoint do webhook
+app.post('/api/webhook/dialogflow', dfHandler);
+
+// ============= Rotas da API existentes =============
+app.get('/', (_req, res) => res.send('API de Rastreamento ativa 🚀'));
 app.use('/api/users', userRoutes);
 app.use('/api/operations', operationRoutes);
 app.use('/api/embarcadores', embarcadorRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/client', clientRoutes);
 
-// health
-app.get('/healthz', (_req, res) => res.status(200).send('ok'));
+// 404 + erro
+app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
+app.use((err, _req, res, _next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
-// up
+// start
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`API up on :${PORT}`));

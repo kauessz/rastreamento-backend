@@ -169,6 +169,7 @@ exports.listAliases = async (req, res) => {
  * Reassocia um alias a um novo mestre
  * Body: { newMasterId }
  * ========================= */
+// reassignAlias que cria a coluna mestre_id automaticamente, se não existir
 exports.reassignAlias = async (req, res) => {
   try {
     const id = Number(req.params.id || 0);
@@ -177,13 +178,46 @@ exports.reassignAlias = async (req, res) => {
       return res.status(400).json({ message: 'Dados inválidos.' });
     }
 
-    const masterCol = await resolveMasterCol();
+    // Descobre se existe alguma coluna de mestre
+    let masterCol = await resolveMasterCol();
+
+    // Se não existe, cria 'mestre_id' agora
     if (!masterCol) {
-      return res.status(400).json({ message: 'Tabela embarcador_aliases não possui coluna de mestre.' });
+      try {
+        await db.query(`ALTER TABLE public.embarcador_aliases
+                        ADD COLUMN IF NOT EXISTS mestre_id integer;`);
+        // Índice para deixar rápido
+        await db.query(`CREATE INDEX IF NOT EXISTS ix_embarcador_aliases_mestre
+                        ON public.embarcador_aliases (mestre_id);`);
+        // FK (tolerante: se já existir, ignora erro)
+        await db.query(`
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1
+                FROM information_schema.table_constraints
+               WHERE table_name = 'embarcador_aliases'
+                 AND constraint_type = 'FOREIGN KEY'
+                 AND constraint_name = 'embarcador_aliases_mestre_fk'
+            ) THEN
+              ALTER TABLE public.embarcador_aliases
+                ADD CONSTRAINT embarcador_aliases_mestre_fk
+                FOREIGN KEY (mestre_id) REFERENCES public.embarcadores(id);
+            END IF;
+          END$$;
+        `);
+        masterCol = 'mestre_id';
+      } catch (e) {
+        console.error('DDL mestre_id error:', e);
+        return res.status(500).json({
+          message: 'Não foi possível criar a coluna de mestre automaticamente. ' +
+                   'Crie a coluna manualmente (mestre_id integer) e tente novamente.'
+        });
+      }
     }
 
     const { rowCount } = await db.query(
-      `UPDATE embarcador_aliases SET "${masterCol}" = $1 WHERE id = $2;`,
+      `UPDATE public.embarcador_aliases SET "${masterCol}" = $1 WHERE id = $2;`,
       [newMasterId, id]
     );
 

@@ -1,6 +1,7 @@
 // dashboard.js
 (() => {
-  const API_BASE = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
+  window.API_BASE_URL = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
+  const API_BASE = window.API_BASE_URL;
 
   function debounce(fn, delay = 500) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn.apply(this, a), delay); }; }
 
@@ -262,4 +263,4 @@
     document.getElementById('btnExcelTop')?.addEventListener('click', () => { const { start, end } = getAdminPeriod(); openAdminReport('/api/reports/top-ofensores.xlsx', { start, end }); });
     document.getElementById('btnExcelAtrasos')?.addEventListener('click', () => { const { start, end } = getAdminPeriod(); openAdminReport('/api/reports/atrasos.xlsx', { start, end }); });
   })();
-});
+})();

@@ -2,9 +2,67 @@
 const db = require('../config/database');
 
 /**
- * Lista mestres (embarcadores) — usado para popular o <select> do gerenciador.
+ * Candidatos de nome para a coluna que referencia o "mestre" na tabela de aliases.
+ * Ex.: mestre_id (padrão), id_mestre, embarcador_mestre_id, mestre, mestreId...
  */
-exports.listMasters = async (req, res) => {
+const MASTER_COL_CANDIDATES = [
+  'mestre_id',
+  'id_mestre',
+  'embarcador_mestre_id',
+  'mestre',
+  'mestreid',
+  'mestreId'
+];
+
+/** Descobre dinamicamente o nome da coluna "mestre" em public.embarcador_aliases */
+async function resolveMasterCol() {
+  const { rows } = await db.query(
+    `
+      SELECT column_name
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name   = 'embarcador_aliases'
+         AND column_name = ANY($1::text[])
+       LIMIT 1;
+    `,
+    [MASTER_COL_CANDIDATES]
+  );
+  return rows[0]?.column_name || null;
+}
+
+/** Verifica se a extensão unaccent está instalada */
+async function hasUnaccentExt() {
+  try {
+    const chk = await db.query(
+      "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='unaccent') AS has;"
+    );
+    return !!chk.rows?.[0]?.has;
+  } catch {
+    return false;
+  }
+}
+
+/** Gera expressão SQL de normalização (sem acentos e sem pontuação) */
+function normExpr(field, useUnaccent) {
+  if (useUnaccent) {
+    return `unaccent(lower(regexp_replace(${field}, '[^a-z0-9]', '', 'g')))`;
+  }
+  // fallback sem unaccent
+  return `lower(
+            regexp_replace(
+              translate(${field},
+                'ÁÀÂÃÄÅÇÉÈÊËÍÌÎÏÑÓÒÔÕÖÚÙÛÜÝáàâãäåçéèêëíìîïñóòôõöúùûüýÿ',
+                'AAAAAACEEEEIIIINOOOOOUUUUYaaaaaaceeeeiiiinooooouuuuyy'
+              ),
+              '[^a-z0-9]', '', 'g'
+            )
+          )`;
+}
+
+/* =========================
+ * Lista mestres (para o <select>)
+ * ========================= */
+exports.listMasters = async (_req, res) => {
   try {
     const { rows } = await db.query(
       'SELECT id, nome_principal FROM embarcadores ORDER BY nome_principal ASC;'
@@ -16,73 +74,89 @@ exports.listMasters = async (req, res) => {
   }
 };
 
-/**
- * Lista aliases com filtros:
- *   - only = unassigned | dupe | all   (padrão: unassigned → só sem mestre)
- *   - q    = texto (busca por alias/mestre, ignorando acentos e pontuação)
- *
- * Tolerante: usa unaccent se existir; caso contrário, usa translate() como fallback.
- */
+/* =========================
+ * Lista aliases (com filtros opcionais)
+ *   - only = unassigned | dupe | all (padrão: unassigned)
+ *   - q    = texto livre (busca em alias e mestre, normalizado)
+ * ========================= */
 exports.listAliases = async (req, res) => {
   try {
-    const only = (req.query.only || 'unassigned').toLowerCase();
-    const q = (req.query.q || '').trim();
+    const only = String(req.query.only || 'unassigned').toLowerCase();
+    const qRaw = String(req.query.q || '').trim();
 
-    // detecta se unaccent está instalado
-    let hasUnaccent = false;
-    try {
-      const chk = await db.query(
-        "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='unaccent') AS has;"
-      );
-      hasUnaccent = !!chk.rows?.[0]?.has;
-    } catch (_) {}
+    const masterCol = await resolveMasterCol();     // pode ser null
+    const hasUnaccent = await hasUnaccentExt();
 
-    const norm = (field) =>
-      hasUnaccent
-        ? `unaccent(lower(regexp_replace(${field}, '[^a-z0-9]', '', 'g')))`
-        : `lower(
-             regexp_replace(
-               translate(${field},
-                 'ÁÀÂÃÄÅÇÉÈÊËÍÌÎÏÑÓÒÔÕÖÚÙÛÜÝáàâãäåçéèêëíìîïñóòôõöúùûüýÿ',
-                 'AAAAAACEEEEIIIINOOOOOUUUUYaaaaaaceeeeiiiinooooouuuuyy'
-               ),
-               '[^a-z0-9]', '', 'g'
-             )
-           )`;
+    const aliasKey  = normExpr('a.nome_alias', hasUnaccent);
+    const masterKey = masterCol
+      ? normExpr('e.nome_principal', hasUnaccent)
+      : null;
 
-    const aliasKey  = norm('a.nome_alias');
-    const masterKey = norm('e.nome_principal');
-
+    const whereParts = [];
     const params = [];
-    let where = 'TRUE';
 
+    // Filtro "only"
     if (only === 'unassigned') {
-      where = 'a.mestre_id IS NULL';
+      // Se não existe coluna de mestre, consideramos todos como "unassigned"
+      if (masterCol) whereParts.push(`a."${masterCol}" IS NULL`);
     } else if (only === 'dupe') {
-      // aliases idênticos ao nome do mestre → candidatos a exclusão
-      where = `a.mestre_id IS NOT NULL AND ${aliasKey} = ${masterKey}`;
+      // Só dá para detectar duplicados se existe coluna de mestre
+      if (masterCol) {
+        whereParts.push(`a."${masterCol}" IS NOT NULL AND ${aliasKey} = ${masterKey}`);
+      } else {
+        // sem coluna de mestre, não há como identificar duplicados → retorna lista vazia
+        return res.status(200).json([]);
+      }
+    } else {
+      // all → sem filtro adicional
     }
 
-    if (q) {
-      const qnorm = q.normalize('NFD')
+    // Filtro por texto
+    if (qRaw) {
+      // normaliza texto do usuário
+      const qnorm = qRaw
+        .normalize('NFD')
         .replace(/\p{Diacritic}/gu, '')
         .replace(/[^a-z0-9]/gi, '')
         .toLowerCase();
+
       params.push(`%${qnorm}%`);
-      where += ` AND (${aliasKey} LIKE $${params.length} OR ${masterKey} LIKE $${params.length})`;
+      if (masterCol) {
+        whereParts.push(`(${aliasKey} LIKE $${params.length} OR ${masterKey} LIKE $${params.length})`);
+      } else {
+        whereParts.push(`(${aliasKey} LIKE $${params.length})`);
+      }
     }
 
-    const sql = `
-      SELECT
-        a.id,
-        a.nome_alias,
-        a.mestre_id,
-        e.nome_principal AS mestre_nome
-      FROM embarcador_aliases a
-      LEFT JOIN embarcadores e ON e.id = a.mestre_id
-      WHERE ${where}
-      ORDER BY a.nome_alias ASC;
-    `;
+    const whereSQL = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+    // Monta SELECT tolerante: se não houver coluna de mestre, devolve mestre_id/nome como null
+    let sql;
+    if (masterCol) {
+      sql = `
+        SELECT
+          a.id,
+          a.nome_alias,
+          a."${masterCol}" AS mestre_id,
+          e.nome_principal  AS mestre_nome
+        FROM embarcador_aliases a
+        LEFT JOIN embarcadores e ON e.id = a."${masterCol}"
+        ${whereSQL}
+        ORDER BY a.nome_alias ASC;
+      `;
+    } else {
+      sql = `
+        SELECT
+          a.id,
+          a.nome_alias,
+          NULL::int  AS mestre_id,
+          NULL::text AS mestre_nome
+        FROM embarcador_aliases a
+        ${whereSQL}
+        ORDER BY a.nome_alias ASC;
+      `;
+    }
+
     const { rows } = await db.query(sql, params);
     return res.status(200).json(rows);
   } catch (err) {
@@ -91,10 +165,10 @@ exports.listAliases = async (req, res) => {
   }
 };
 
-/**
- * Reassocia um alias a um novo mestre.
+/* =========================
+ * Reassocia um alias a um novo mestre
  * Body: { newMasterId }
- */
+ * ========================= */
 exports.reassignAlias = async (req, res) => {
   try {
     const id = Number(req.params.id || 0);
@@ -103,13 +177,17 @@ exports.reassignAlias = async (req, res) => {
       return res.status(400).json({ message: 'Dados inválidos.' });
     }
 
+    const masterCol = await resolveMasterCol();
+    if (!masterCol) {
+      return res.status(400).json({ message: 'Tabela embarcador_aliases não possui coluna de mestre.' });
+    }
+
     const { rowCount } = await db.query(
-      'UPDATE embarcador_aliases SET mestre_id = $1 WHERE id = $2;',
+      `UPDATE embarcador_aliases SET "${masterCol}" = $1 WHERE id = $2;`,
       [newMasterId, id]
     );
-    if (!rowCount) {
-      return res.status(404).json({ message: 'Alias não encontrado.' });
-    }
+
+    if (!rowCount) return res.status(404).json({ message: 'Alias não encontrado.' });
     return res.status(200).json({ message: 'Apelido reassociado com sucesso.' });
   } catch (err) {
     console.error('reassignAlias error:', err);
@@ -117,9 +195,9 @@ exports.reassignAlias = async (req, res) => {
   }
 };
 
-/**
- * Exclui um alias.
- */
+/* =========================
+ * Exclui um alias
+ * ========================= */
 exports.deleteAlias = async (req, res) => {
   try {
     const id = Number(req.params.id || 0);
@@ -129,9 +207,8 @@ exports.deleteAlias = async (req, res) => {
       'DELETE FROM embarcador_aliases WHERE id = $1;',
       [id]
     );
-    if (!rowCount) {
-      return res.status(404).json({ message: 'Alias não encontrado.' });
-    }
+
+    if (!rowCount) return res.status(404).json({ message: 'Alias não encontrado.' });
     return res.status(200).json({ message: 'Apelido excluído com sucesso.' });
   } catch (err) {
     console.error('deleteAlias error:', err);

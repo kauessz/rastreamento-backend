@@ -1,7 +1,7 @@
 // src/controllers/reportsController.js
 const PDFDocument = require('pdfkit');
 const ExcelJS = require('exceljs');
-const { pool } = require('../database'); // seu database.js já exporta pool
+const pool = require('../database'); // seu database.js já exporta pool
 const { sendMail } = require('../utils/mailer');
 
 // Util: converte buffer do PDF

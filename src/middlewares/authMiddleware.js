@@ -1,25 +1,39 @@
-// src/middlewares/authMiddleware.js
-const admin = require('../config/firebase');
+// src/middleware/authMiddleware.js
+const admin = require('firebase-admin');
 
-const authMiddleware = async (req, res, next) => {
-  if (req.method === 'OPTIONS') return next(); // preflight passa
-
-  const auth = req.headers.authorization || '';
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  const token = m && m[1];
-
-  if (!token) {
-    return res.status(401).json({ message: 'Não autorizado: Token não fornecido.' });
-  }
-
+module.exports = async function authMiddleware(req, res, next) {
   try {
-    const decodedToken = await admin.auth().verifyIdToken(token);
-    req.user = decodedToken;
-    next();
-  } catch (error) {
-    console.error('Erro na verificação do token:', error);
-    return res.status(403).json({ message: 'Token inválido ou expirado.' });
+    let idToken = null;
+
+    // 1) Authorization: Bearer <token>
+    const auth = req.get('authorization') || req.get('Authorization');
+    if (auth && auth.startsWith('Bearer ')) {
+      idToken = auth.slice(7);
+    }
+
+    // 2) Header alternativo
+    if (!idToken) {
+      idToken = req.get('x-auth-token') || req.get('X-Auth-Token') || null;
+    }
+
+    // 3) Querystring (para downloads via window.open)
+    if (!idToken) {
+      idToken = req.query.token || req.query.idToken || null;
+    }
+
+    if (!idToken) {
+      return res.status(401).json({ message: 'Não autorizado: Token não fornecido.' });
+    }
+
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    req.user = {
+      uid: decoded.uid,
+      email: decoded.email || null,
+      claims: decoded
+    };
+    return next();
+  } catch (err) {
+    console.error('authMiddleware error:', err);
+    return res.status(401).json({ message: 'Não autorizado: Token inválido.' });
   }
 };
-
-module.exports = authMiddleware;

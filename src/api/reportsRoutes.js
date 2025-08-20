@@ -3,41 +3,43 @@ const express = require('express');
 const router = express.Router();
 const reports = require('../controllers/reportsController');
 
-// ===== Resolver robusto p/ authMiddleware (várias possibilidades de caminho/export) =====
-function resolveAuthMiddleware() {
+// resolutores robustos para middlewares
+function resolveAuth() {
   const candidates = [
     '../middleware/authMiddleware',
     '../../middleware/authMiddleware',
     '../middlewares/authMiddleware',
-    '../../middlewares/authMiddleware',
-    '../authMiddleware',
-    '../../authMiddleware'
+    '../../middlewares/authMiddleware'
   ];
-  for (const p of candidates) {
-    try {
-      const mod = require(p);
-      return mod.authMiddleware || mod.default || mod; // suporta export default, named ou direto
-    } catch (_) {
-      // tenta próxima opção
-    }
-  }
-  throw new Error(
-    "authMiddleware não encontrado. Verifique o caminho. " +
-    "Ex.: coloque o arquivo em src/middleware/authMiddleware.js e use require('../middleware/authMiddleware')."
-  );
+  for (const p of candidates) { try {
+    const mod = require(p);
+    return mod.authMiddleware || mod.default || mod;
+  } catch {} }
+  throw new Error('authMiddleware não encontrado.');
 }
-const authMiddleware = resolveAuthMiddleware();
+function resolveIsAdmin() {
+  const candidates = [
+    '../middleware/adminMiddleware',
+    '../../middleware/adminMiddleware',
+    '../middlewares/adminMiddleware',
+    '../../middlewares/adminMiddleware'
+  ];
+  for (const p of candidates) { try {
+    const mod = require(p);
+    return mod.isAdmin || mod.default || mod; // suporta export direto ou nomeado
+  } catch {} }
+  throw new Error('adminMiddleware (isAdmin) não encontrado.');
+}
 
-// ================= Rotas =================
+const authMiddleware = resolveAuth();
+const isAdmin = resolveIsAdmin();
 
-// PDF diário
-router.get('/daily', authMiddleware, reports.getDailyReport);
+// ===== ROTAS (agora admin-only) =====
+router.get('/daily', authMiddleware, isAdmin, reports.getDailyReport);
+router.get('/top-ofensores.xlsx', authMiddleware, isAdmin, reports.topOffendersExcel);
+router.get('/atrasos.xlsx', authMiddleware, isAdmin, reports.resumoAtrasosExcel);
 
-// Excel (Top 10 e Resumo de Atrasos)
-router.get('/top-ofensores.xlsx', authMiddleware, reports.topOffendersExcel);
-router.get('/atrasos.xlsx', authMiddleware, reports.resumoAtrasosExcel);
-
-// Webhook de novo arquivo (se quiser, proteja com um token próprio no header)
+// Webhook: se quiser, também pode proteger com token interno
 router.post('/hooks/new-file', reports.webhookNewFile);
 
 module.exports = router;

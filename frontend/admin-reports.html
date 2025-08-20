@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Relatórios (Admin)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: Inter, system-ui, Arial, sans-serif; margin: 0; background:#0f1115; color:#e6e6e6; }
+    header { display:flex; justify-content:space-between; align-items:center; padding:16px 20px; border-bottom:1px solid #1d2230; position:sticky; top:0; background:#0f1115; }
+    .brand { font-weight:600; letter-spacing:.2px; }
+    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    .card { background:#121522; border:1px solid #1d2230; border-radius:16px; padding:16px; box-shadow: 0 10px 24px rgba(0,0,0,.25); }
+    .grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); }
+    label { font-size:12px; color:#a4acc4; display:block; margin-bottom:6px; }
+    input[type="date"], input[type="number"], input[type="text"] {
+      width: 100%; background:#0f1320; color:#e6e6e6; border:1px solid #212842;
+      border-radius:10px; padding:10px 12px; outline:none;
+    }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:end; }
+    button {
+      background:#2b5cff; color:#fff; border:none; border-radius:10px; padding:10px 14px;
+      cursor:pointer; font-weight:600;
+    }
+    button.ghost { background:transparent; border:1px solid #2b5cff; color:#cbd6ff; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .muted { color:#9aa6bf; font-size:12px; }
+  </style>
+  <!-- Firebase App + Auth (use as mesmas versões que já usa no admin) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script> window.API_BASE_URL = "https://rastreamento-backend-05pi.onrender.com";</script>
+  <script src="js/firebase-init.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">📊 Relatórios — Admin</div>
+    <div><button id="btnLogout" class="ghost">Sair</button></div>
+  </header>
+
+  <main class="wrap">
+    <section class="card" style="margin-bottom:16px">
+      <div class="grid">
+        <div>
+          <label>Início</label>
+          <input id="start" type="date" />
+        </div>
+        <div>
+          <label>Fim</label>
+          <input id="end" type="date" />
+        </div>
+        <div>
+          <label>Empresa (companyId)</label>
+          <input id="companyId" type="number" placeholder="0 = todas" />
+          <div class="muted">Deixe 0 para todas as empresas.</div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button id="btnPdf">Gerar PDF (Diário)</button>
+        <button id="btnTop">Excel — Top 10 Ofensores</button>
+        <button id="btnAtrasos">Excel — Resumo de Atrasos</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div id="log" class="muted">Pronto para gerar relatórios…</div>
+    </section>
+  </main>
+
+  <script src="./admin-reports.js"></script>
+</body>
+</html>

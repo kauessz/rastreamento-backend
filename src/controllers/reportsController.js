@@ -6,11 +6,11 @@ const { sendMail } = require('../utils/mailer');
 let pool;
 try {
   // caso comum: src/database.js
-  const db = require('../database');
+  const db = require('../config/database');
   pool = db.pool || db;       // funciona se exportou { pool } ou exportou pool direto
 } catch (e) {
   // fallback para projetos que acabam ficando em src/src/
-  const db = require('../../database');
+  const db = require('../../config/database');
   pool = db.pool || db;
 }
 

@@ -13,6 +13,7 @@ const operationRoutes   = require('./api/operationRoutes');
 const embarcadorRoutes  = require('./api/embarcadorRoutes');
 const dashboardRoutes   = require('./api/dashboardRoutes');
 const clientRoutes      = require('./api/clientRoutes');
+const reportsRoutes = require('./api/reportsRoutes');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -26,6 +27,8 @@ app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 });
+
+app.use('/api/reports', reportsRoutes);
 
 // -----------------------------
 // helpers

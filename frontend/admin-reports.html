@@ -26,11 +26,6 @@
     button:disabled { opacity:.6; cursor:not-allowed; }
     .muted { color:#9aa6bf; font-size:12px; }
   </style>
-  <!-- Firebase App + Auth (use as mesmas versões que já usa no admin) -->
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-  <script> window.API_BASE_URL = "https://rastreamento-backend-05pi.onrender.com";</script>
-  <script src="js/firebase-init.js"></script>
 </head>
 <body>
   <header>
@@ -66,7 +61,10 @@
       <div id="log" class="muted">Pronto para gerar relatórios…</div>
     </section>
   </main>
-
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script> window.API_BASE_URL = "https://rastreamento-backend-05pi.onrender.com";</script>
+  <script src="js/firebase-init.js"></script>
   <script src="./admin-reports.js"></script>
 </body>
 </html>

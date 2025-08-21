@@ -7,9 +7,9 @@ const cors = require('cors');
 const app = express();
 app.set('trust proxy', 1);
 
-// ---------- CORS ----------
-const allowed = [
-  process.env.FRONT_ORIGIN,                   // ex: https://tracking-r.netlify.app
+// --------- CORS ---------
+const allowedOrigins = [
+  process.env.FRONT_ORIGIN,                // opcional: defina no Render (ex.: https://tracking-r.netlify.app)
   'https://tracking-r.netlify.app',
   'http://localhost:5500',
   'http://127.0.0.1:5500'
@@ -17,7 +17,7 @@ const allowed = [
 
 const corsOptions = {
   origin(origin, cb) {
-    if (!origin || allowed.includes(origin)) return cb(null, true);
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
     try {
       const host = new URL(origin).hostname;
       if (host.endsWith('netlify.app') || host.endsWith('onrender.com')) return cb(null, true);
@@ -34,11 +34,11 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
 
-// ---------- Health ----------
+// --------- Health & raiz ---------
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa 🚀'));
 
-// ---------- Helpers de montagem segura ----------
+// --------- Helpers de montagem (diagnóstico) ---------
 function safeRequire(label, modPath) {
   try {
     const mod = require(modPath);
@@ -48,7 +48,6 @@ function safeRequire(label, modPath) {
     return null;
   }
 }
-
 function safeMount(urlPath, modPath) {
   try {
     if (typeof urlPath !== 'string' || !urlPath.startsWith('/')) {
@@ -57,20 +56,29 @@ function safeMount(urlPath, modPath) {
     }
     const routes = safeRequire(urlPath, modPath);
     if (!routes) return;
+    const ok = typeof routes === 'function' || (routes && typeof routes.use === 'function');
+    if (!ok) {
+      console.error(`❌ Módulo de rotas não exporta um Router válido: ${modPath}`);
+      return;
+    }
     app.use(urlPath, routes);
     console.log(`✅ Rotas montadas em ${urlPath} ← ${modPath}`);
   } catch (err) {
-    // Se o path-to-regexp quebrar, vai cair aqui e indicar exatamente qual rota
     console.error(`❌ Erro ao montar ${urlPath} (${modPath}):\n`, err && err.stack || err);
   }
 }
 
-// ---------- Webhook Dialogflow (igual ao seu, se já usava) ----------
-const db = require('./config/database'); // mantém se você usa no webhook
+// --------- Webhook do Dialogflow ---------
+const db = require('./config/database'); // pool do Postgres
+
 function toBR(iso) { try { return new Date(iso).toLocaleDateString('pt-BR'); } catch { return iso; } }
 function getBaseUrl(req) { return process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`; }
 function sanitizeContainer(s) { return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
 const CONTAINER_RE = /([A-Za-z]{4}\s*-?\s*\d{3}\s*-?\s*\d{4})/i;
+
+// session-id do Dialogflow Messenger:
+// - cliente: client:<companyId>:<email>
+// - admin:   admin:0:<email>
 function parseSession(req) {
   const sessionPath = req.body?.session || '';
   const sessionId = sessionPath.split('/').pop() || '';
@@ -94,12 +102,14 @@ function dfButton(link, text) {
 
 const dfHandler = async (req, res) => {
   try {
+    // auth opcional do webhook (via header)
     if (process.env.DF_TOKEN) {
       const got = req.get('x-dialogflow-token');
       if (got !== process.env.DF_TOKEN) {
         return res.status(401).json({ fulfillmentText: 'Unauthorized' });
       }
     }
+
     const { role, companyId } = parseSession(req);
     const intentName = (req.body?.queryResult?.intent?.displayName || '').replace(/\s+/g, '');
     const p = req.body?.queryResult?.parameters || {};
@@ -111,10 +121,12 @@ const dfHandler = async (req, res) => {
       return res.json({ fulfillmentText: 'Webhook OK! ✅' });
     }
 
+    // ----- RastrearCarga -----
     if (intentName === 'RastrearCarga') {
       if (!booking && !container) {
         return res.json({ fulfillmentText: 'Me diga o *booking* ou o número do *container* para eu rastrear 🙂' });
       }
+
       const filter = companyFilter('op', 3, role, companyId);
       const sql = `
         SELECT emb.nome_principal AS embarcador, op.status_operacao,
@@ -127,10 +139,17 @@ const dfHandler = async (req, res) => {
                ${filter.clause}
         ORDER BY op.id DESC
         LIMIT 3;`;
-      const params = [ booking ? `%${booking}%` : '', container ? `%${container}%` : '' ];
+
+      const params = [
+        booking ? `%${booking}%` : '',
+        container ? `%${container}%` : ''
+      ];
       if (filter.value !== null) params.push(filter.value);
+
       const { rows } = await db.query(sql, params);
-      if (!rows.length) return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código pra mim?' });
+      if (!rows.length) {
+        return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código pra mim?' });
+      }
 
       const lines = rows.map(r => {
         const pre = r.previsao_inicio_atendimento ? new Date(r.previsao_inicio_atendimento).toLocaleString('pt-BR') : 'N/A';
@@ -144,13 +163,16 @@ Prev/Atend: ${pre}
 Início: ${ini} | Fim: ${fim}
 Prev. Entrega (recalc): ${rec}`;
       });
+
       return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
     }
 
+    // ----- TopOfensores -----
     if (intentName === 'TopOfensores') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
       const end = period.endDate || new Date().toISOString();
+
       const params = [start, end];
       const filt = companyFilter('op', params.length + 1, role, companyId);
       if (filt.value !== null) params.push(filt.value);
@@ -168,19 +190,23 @@ Prev. Entrega (recalc): ${rec}`;
         GROUP BY 1
         ORDER BY qtd DESC
         LIMIT 10;`;
+
       const { rows } = await db.query(q, params);
       if (!rows.length) {
         return res.json({ fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}): sem atrasos 👏` });
       }
+
       const txt = rows.map((r, i) => `${i + 1}. ${r.embarcador}: ${r.qtd}`).join('\n');
       const base = getBaseUrl(req);
       const link = `${base}/api/reports/top-ofensores.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
+
       return res.json({
         fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}):\n${txt}`,
         fulfillmentMessages: [dfButton(link, 'Baixar Excel (Top 10)')]
       });
     }
 
+    // ----- RelatorioPeriodo (atrasos) -----
     if (intentName === 'RelatorioPeriodo') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
@@ -199,11 +225,13 @@ Prev. Entrega (recalc): ${rec}`;
           FROM operacoes op
           WHERE op.previsao_inicio_atendimento BETWEEN $1 AND $2
           ${filt.clause};`;
+
         const { rows } = await db.query(q, params);
         const r = rows[0] || { iniciadas_atrasadas: 0, nao_iniciadas_atrasadas: 0, total: 0 };
 
         const base = getBaseUrl(req);
         const link = `${base}/api/reports/atrasos.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
+
         return res.json({
           fulfillmentText:
             `Resumo ${toBR(start)}–${toBR(end)}:\n` +
@@ -213,10 +241,11 @@ Prev. Entrega (recalc): ${rec}`;
           fulfillmentMessages: [dfButton(link, 'Baixar Excel (Resumo de Atrasos)')]
         });
       }
+
       return res.json({ fulfillmentText: 'Relatório ainda não implementado. Tente “atrasos” ou “top ofensores”.' });
     }
 
-    // Plano B: tenta detectar container/booking no texto livre
+    // Plano B: detectar container/booking no texto livre
     try {
       const qtext = (req.body?.queryResult?.queryText || '').trim();
       const mCont = qtext.match(CONTAINER_RE);
@@ -242,6 +271,7 @@ Prev. Entrega (recalc): ${rec}`;
            ${filt2.clause}
            ORDER BY op.id DESC
            LIMIT 3;`;
+
         const { rows } = await db.query(sql2, params2);
         if (rows.length) {
           const fmt = d => (d ? new Date(d).toLocaleString('pt-BR') : '—');
@@ -259,6 +289,7 @@ Prev. Entrega (recalc): ${rec}`;
       console.error('Plano B (fallback detect) error:', e);
     }
 
+    // Fallback
     const original = req.body?.queryResult?.intent?.displayName || '';
     return res.json({ fulfillmentText: `Recebi a intent: ${original || 'desconhecida'}` });
   } catch (err) {
@@ -267,26 +298,25 @@ Prev. Entrega (recalc): ${rec}`;
   }
 };
 
-// Webhook
 app.post('/webhook/dialogflow', dfHandler);
 app.post('/api/webhook/dialogflow', dfHandler); // alias
 
-// ---------- Montagem de rotas com try/catch ----------
+// --------- Montagem das rotas ---------
 safeMount('/api/users',        './api/userRoutes');
 safeMount('/api/operations',   './api/operationRoutes');
 safeMount('/api/embarcadores', './api/embarcadorRoutes');
 safeMount('/api/dashboard',    './api/dashboardRoutes');
 safeMount('/api/client',       './api/clientRoutes');
 safeMount('/api/reports',      './api/reportsRoutes');
-safeMount('/api/ai',           './api/aiRoutes'); // sua rota de IA
+// (Se reativar a IA depois) safeMount('/api/ai', './api/aiRoutes');
 
-// ---------- 404 & handler de erro ----------
+// --------- 404 + handler de erro ---------
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, _req, res, _next) => {
   console.error('🔥 Unhandled error:', err && err.stack || err);
   res.status(500).json({ error: 'Internal error' });
 });
 
-// ---------- Start ----------
+// --------- Start ---------
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`API up on :${PORT}`));

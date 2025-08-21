@@ -60,6 +60,14 @@
   });
   document.getElementById('logoutButton')?.addEventListener('click', () => firebase.auth().signOut());
 
+  // abre a página de relatórios (admin-only)
+  document.getElementById('navReports')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    // usa a mesma origem do admin; não precisa token na URL (a página obtém o idToken via Firebase)
+    window.location.href = 'admin-reports.html';   // ou: window.open('admin-reports.html', '_self')
+  });
+
+
   // ===== Elements
   const operationsTableBody = document.querySelector('#operationsTable tbody');
   const operationsTableHead = document.querySelector('#operationsTable thead');

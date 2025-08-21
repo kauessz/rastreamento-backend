@@ -7,6 +7,29 @@ const cors = require('cors');
 // Pool do Postgres
 const db = require('./config/database');
 
+const allowedOrigins = [
+  process.env.FRONT_ORIGIN,
+  'https://tracking-r.netlify.app',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500'
+];
+
+const corsOptions = {
+  origin(origin, cb) {
+    // requests sem Origin (ex: curl) ou da mesma origem passam
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS: origem não permitida: ${origin}`));
+  },
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+  allowedHeaders: 'Authorization, Content-Type, X-Requested-With',
+  credentials: false,          // estamos usando Bearer token, não cookies
+  optionsSuccessStatus: 204
+};
+
+app.options('*', cors(corsOptions));
+app.use(cors(corsOptions));
+
+
 // Rotas
 const userRoutes        = require('./api/userRoutes');
 const operationRoutes   = require('./api/operationRoutes');

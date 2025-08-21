@@ -1,21 +1,71 @@
 // src/server.js
 require('dotenv').config();
 
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 
+// ---------- PATCH: Detector de rotas inválidas ----------
+// (executa ANTES de qualquer require de rotas)
+(function patchExpressRouter() {
+  const origRouter = express.Router;
+  if (!origRouter.__patched) {
+    express.Router = function patchedRouter(...args) {
+      const router = origRouter.apply(this, args);
+      const methods = ['get','post','put','delete','patch','all','use'];
+      for (const m of methods) {
+        const orig = router[m].bind(router);
+        router[m] = function (p, ...handlers) {
+          try {
+            // permite RegExp e arrays de paths normalmente
+            if (typeof p === 'string') {
+              const stack = new Error().stack || '';
+              // tenta achar o arquivo chamador
+              const caller = stack.split('\n').find(l => l.includes(path.sep + 'api' + path.sep));
+              const where = caller ? caller.trim() : '(localização não detectada)';
+
+              // 1) URL absoluta (ERRADO)
+              if (/^https?:\/\//i.test(p)) {
+                console.error(`❌ Rota com URL absoluta detectada (${m.toUpperCase()} "${p}") em ${where}. NÃO será registrada.`);
+                return router; // skip
+              }
+              // 2) path vazio / inválido
+              if (!p.startsWith('/')) {
+                console.error(`❌ Path inválido (não começa com "/") (${m.toUpperCase()} "${p}") em ${where}. NÃO será registrada.`);
+                return router; // skip
+              }
+              // 3) parâmetro sem nome "/:/" ou "/:" no fim
+              if (/(^|\/):($|\/)/.test(p)) {
+                console.error(`❌ Parâmetro sem nome no path (${m.toUpperCase()} "${p}") em ${where}. Ajuste para "/:id" etc. NÃO será registrada.`);
+                return router; // skip
+              }
+            }
+          } catch (e) {
+            console.error('Detector de rotas: falhou ao inspecionar path:', e);
+          }
+          return orig(p, ...handlers);
+        };
+      }
+      router.__patched = true;
+      return router;
+    };
+    express.Router.__patched = true;
+  }
+})();
+
+// ---------- App ----------
 const app = express();
 app.set('trust proxy', 1);
 
-// --------- CORS ---------
+// ---------- CORS ----------
 const allowedOrigins = [
-  process.env.FRONT_ORIGIN,                // opcional: defina no Render (ex.: https://tracking-r.netlify.app)
+  process.env.FRONT_ORIGIN,                   // ex: https://tracking-r.netlify.app
   'https://tracking-r.netlify.app',
   'http://localhost:5500',
   'http://127.0.0.1:5500'
 ].filter(Boolean);
 
-const corsOptions = {
+app.use(cors({
   origin(origin, cb) {
     if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
     try {
@@ -26,19 +76,16 @@ const corsOptions = {
   },
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   allowedHeaders: 'Authorization, Content-Type, X-Requested-With',
-  credentials: false,
   optionsSuccessStatus: 204
-};
-
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+}));
+app.options('*', cors());
 app.use(express.json());
 
-// --------- Health & raiz ---------
+// ---------- Health ----------
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa 🚀'));
 
-// --------- Helpers de montagem (diagnóstico) ---------
+// ---------- Utils p/ montagem segura ----------
 function safeRequire(label, modPath) {
   try {
     const mod = require(modPath);
@@ -68,17 +115,14 @@ function safeMount(urlPath, modPath) {
   }
 }
 
-// --------- Webhook do Dialogflow ---------
-const db = require('./config/database'); // pool do Postgres
+// ---------- Webhook do Dialogflow ----------
+const db = require('./config/database');
 
 function toBR(iso) { try { return new Date(iso).toLocaleDateString('pt-BR'); } catch { return iso; } }
 function getBaseUrl(req) { return process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`; }
 function sanitizeContainer(s) { return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
 const CONTAINER_RE = /([A-Za-z]{4}\s*-?\s*\d{3}\s*-?\s*\d{4})/i;
 
-// session-id do Dialogflow Messenger:
-// - cliente: client:<companyId>:<email>
-// - admin:   admin:0:<email>
 function parseSession(req) {
   const sessionPath = req.body?.session || '';
   const sessionId = sessionPath.split('/').pop() || '';
@@ -102,7 +146,6 @@ function dfButton(link, text) {
 
 const dfHandler = async (req, res) => {
   try {
-    // auth opcional do webhook (via header)
     if (process.env.DF_TOKEN) {
       const got = req.get('x-dialogflow-token');
       if (got !== process.env.DF_TOKEN) {
@@ -121,12 +164,11 @@ const dfHandler = async (req, res) => {
       return res.json({ fulfillmentText: 'Webhook OK! ✅' });
     }
 
-    // ----- RastrearCarga -----
+    // RastrearCarga
     if (intentName === 'RastrearCarga') {
       if (!booking && !container) {
         return res.json({ fulfillmentText: 'Me diga o *booking* ou o número do *container* para eu rastrear 🙂' });
       }
-
       const filter = companyFilter('op', 3, role, companyId);
       const sql = `
         SELECT emb.nome_principal AS embarcador, op.status_operacao,
@@ -139,17 +181,10 @@ const dfHandler = async (req, res) => {
                ${filter.clause}
         ORDER BY op.id DESC
         LIMIT 3;`;
-
-      const params = [
-        booking ? `%${booking}%` : '',
-        container ? `%${container}%` : ''
-      ];
+      const params = [ booking ? `%${booking}%` : '', container ? `%${container}%` : '' ];
       if (filter.value !== null) params.push(filter.value);
-
       const { rows } = await db.query(sql, params);
-      if (!rows.length) {
-        return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código pra mim?' });
-      }
+      if (!rows.length) return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código pra mim?' });
 
       const lines = rows.map(r => {
         const pre = r.previsao_inicio_atendimento ? new Date(r.previsao_inicio_atendimento).toLocaleString('pt-BR') : 'N/A';
@@ -163,20 +198,17 @@ Prev/Atend: ${pre}
 Início: ${ini} | Fim: ${fim}
 Prev. Entrega (recalc): ${rec}`;
       });
-
       return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
     }
 
-    // ----- TopOfensores -----
+    // TopOfensores
     if (intentName === 'TopOfensores') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
       const end = period.endDate || new Date().toISOString();
-
       const params = [start, end];
       const filt = companyFilter('op', params.length + 1, role, companyId);
       if (filt.value !== null) params.push(filt.value);
-
       const q = `
         SELECT emb.nome_principal AS embarcador, COUNT(*) AS qtd
         FROM operacoes op
@@ -190,34 +222,27 @@ Prev. Entrega (recalc): ${rec}`;
         GROUP BY 1
         ORDER BY qtd DESC
         LIMIT 10;`;
-
       const { rows } = await db.query(q, params);
-      if (!rows.length) {
-        return res.json({ fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}): sem atrasos 👏` });
-      }
-
+      if (!rows.length) return res.json({ fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}): sem atrasos 👏` });
       const txt = rows.map((r, i) => `${i + 1}. ${r.embarcador}: ${r.qtd}`).join('\n');
       const base = getBaseUrl(req);
       const link = `${base}/api/reports/top-ofensores.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
-
       return res.json({
         fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}):\n${txt}`,
         fulfillmentMessages: [dfButton(link, 'Baixar Excel (Top 10)')]
       });
     }
 
-    // ----- RelatorioPeriodo (atrasos) -----
+    // RelatorioPeriodo (atrasos)
     if (intentName === 'RelatorioPeriodo') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
       const end = period.endDate || new Date().toISOString();
       const tipo = (p.report_type || 'atrasos').toString();
-
       if (tipo === 'atrasos') {
         const params = [start, end];
         const filt = companyFilter('op', params.length + 1, role, companyId);
         if (filt.value !== null) params.push(filt.value);
-
         const q = `
           SELECT COUNT(*) FILTER (WHERE op.dt_inicio_execucao > op.previsao_inicio_atendimento) AS iniciadas_atrasadas,
                  COUNT(*) FILTER (WHERE op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW()) AS nao_iniciadas_atrasadas,
@@ -225,13 +250,10 @@ Prev. Entrega (recalc): ${rec}`;
           FROM operacoes op
           WHERE op.previsao_inicio_atendimento BETWEEN $1 AND $2
           ${filt.clause};`;
-
         const { rows } = await db.query(q, params);
         const r = rows[0] || { iniciadas_atrasadas: 0, nao_iniciadas_atrasadas: 0, total: 0 };
-
         const base = getBaseUrl(req);
         const link = `${base}/api/reports/atrasos.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
-
         return res.json({
           fulfillmentText:
             `Resumo ${toBR(start)}–${toBR(end)}:\n` +
@@ -241,55 +263,10 @@ Prev. Entrega (recalc): ${rec}`;
           fulfillmentMessages: [dfButton(link, 'Baixar Excel (Resumo de Atrasos)')]
         });
       }
-
       return res.json({ fulfillmentText: 'Relatório ainda não implementado. Tente “atrasos” ou “top ofensores”.' });
     }
 
-    // Plano B: detectar container/booking no texto livre
-    try {
-      const qtext = (req.body?.queryResult?.queryText || '').trim();
-      const mCont = qtext.match(CONTAINER_RE);
-      const mBook = qtext.match(/(?:\bbooking\s*)?([A-Za-z0-9-]{6,20})/i);
-      const container2 = mCont ? sanitizeContainer(mCont[1]) : '';
-      const booking2 = (!mCont && mBook) ? mBook[1] : '';
-
-      if (container2 || booking2) {
-        const params2 = [booking2 ? `%${booking2}%` : '', container2 ? `%${container2}%` : ''];
-        const filt2 = companyFilter('op', params2.length + 1, role, companyId);
-        if (filt2.value !== null) params2.push(filt2.value);
-
-        const sql2 = `
-          SELECT emb.nome_principal AS embarcador, op.status_operacao,
-                 op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
-                 op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
-            FROM operacoes op
-            JOIN embarcadores emb ON op.embarcador_id = emb.id
-           WHERE (
-             ($1 <> '' AND op.booking ILIKE $1)
-             OR ($2 <> '' AND regexp_replace(op.containers, '[^A-Za-z0-9]', '', 'g') ILIKE $2)
-           )
-           ${filt2.clause}
-           ORDER BY op.id DESC
-           LIMIT 3;`;
-
-        const { rows } = await db.query(sql2, params2);
-        if (rows.length) {
-          const fmt = d => (d ? new Date(d).toLocaleString('pt-BR') : '—');
-          const lines = rows.map(r =>
-            `• ${r.tipo_programacao} — ${r.status_operacao || 'Sem status'}\n` +
-            `  Embarcador: ${r.embarcador}\n` +
-            `  Booking: ${r.booking} | Container(s): ${r.containers}\n` +
-            `  Prev/Execução: ${fmt(r.dt_inicio_execucao || r.previsao_inicio_atendimento || r.dt_previsao_entrega_recalculada)}`
-          );
-          return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
-        }
-        return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código?' });
-      }
-    } catch (e) {
-      console.error('Plano B (fallback detect) error:', e);
-    }
-
-    // Fallback
+    // Fallback simples
     const original = req.body?.queryResult?.intent?.displayName || '';
     return res.json({ fulfillmentText: `Recebi a intent: ${original || 'desconhecida'}` });
   } catch (err) {
@@ -301,22 +278,22 @@ Prev. Entrega (recalc): ${rec}`;
 app.post('/webhook/dialogflow', dfHandler);
 app.post('/api/webhook/dialogflow', dfHandler); // alias
 
-// --------- Montagem das rotas ---------
+// ---------- Montagem das rotas (com try/catch + logs) ----------
 safeMount('/api/users',        './api/userRoutes');
 safeMount('/api/operations',   './api/operationRoutes');
 safeMount('/api/embarcadores', './api/embarcadorRoutes');
 safeMount('/api/dashboard',    './api/dashboardRoutes');
 safeMount('/api/client',       './api/clientRoutes');
 safeMount('/api/reports',      './api/reportsRoutes');
-// (Se reativar a IA depois) safeMount('/api/ai', './api/aiRoutes');
+// (Se recriar a IA) safeMount('/api/ai', './api/aiRoutes');
 
-// --------- 404 + handler de erro ---------
+// ---------- 404 + handler ----------
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, _req, res, _next) => {
   console.error('🔥 Unhandled error:', err && err.stack || err);
   res.status(500).json({ error: 'Internal error' });
 });
 
-// --------- Start ---------
+// ---------- Start ----------
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`API up on :${PORT}`));

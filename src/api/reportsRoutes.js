@@ -2,6 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const reports = require('../controllers/reportsController');
+const authMiddleware = require('../middlewares/authMiddleware'); // plural
+const isAdmin        = require('../middlewares/adminMiddleware'); // plural
 
 // resolutores robustos para middlewares
 function resolveAuth() {

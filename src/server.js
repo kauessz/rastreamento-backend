@@ -3,29 +3,31 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const ExcelJS = require('exceljs');                 // <- você usa nos endpoints de Excel
-const db = require('./config/database');            // pool do Postgres
+const db = require('./config/database'); // pool do Postgres
 
-// ---------- App & CORS ----------
 const app = express();
 app.set('trust proxy', 1);
 
+// --------- CORS ---------
 const allowedOrigins = [
-  process.env.FRONT_ORIGIN,                         // opcional via .env
-  'https://tracking-r.netlify.app',                 // seu Netlify
+  process.env.FRONT_ORIGIN,                  // opcional: defina no Render, ex: https://tracking-r.netlify.app
+  'https://tracking-r.netlify.app',
   'http://localhost:5500',
   'http://127.0.0.1:5500'
 ].filter(Boolean);
 
 const corsOptions = {
   origin(origin, cb) {
-    // Permite chamadas sem Origin (ex.: curl) e as origens liberadas acima
     if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    try {
+      const host = new URL(origin).hostname;
+      if (host.endsWith('netlify.app') || host.endsWith('onrender.com')) return cb(null, true);
+    } catch {}
     return cb(new Error(`CORS: origem não permitida: ${origin}`));
   },
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   allowedHeaders: 'Authorization, Content-Type, X-Requested-With',
-  credentials: false,                               // usamos Bearer Token, não cookies
+  credentials: false,
   optionsSuccessStatus: 204
 };
 
@@ -33,13 +35,13 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
 
-// Log simples
+// --------- Logs simples ---------
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 });
 
-// ---------- Utils ----------
+// --------- Utils para o Dialogflow ---------
 function toBR(iso) { try { return new Date(iso).toLocaleDateString('pt-BR'); } catch { return iso; } }
 function getBaseUrl(req) { return process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`; }
 function sanitizeContainer(s) { return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
@@ -69,7 +71,7 @@ function dfButton(link, text) {
   };
 }
 
-// ---------- Webhook Dialogflow ----------
+// --------- Webhook do Dialogflow ---------
 const dfHandler = async (req, res) => {
   try {
     // auth opcional do webhook (via header)
@@ -260,7 +262,7 @@ Prev. Entrega (recalc): ${rec}`;
       console.error('Plano B (fallback detect) error:', e);
     }
 
-    // Fallback padrão
+    // Fallback
     const original = req.body?.queryResult?.intent?.displayName || '';
     return res.json({ fulfillmentText: `Recebi a intent: ${original || 'desconhecida'}` });
   } catch (err) {
@@ -273,117 +275,38 @@ Prev. Entrega (recalc): ${rec}`;
 app.post('/webhook/dialogflow', dfHandler);
 app.post('/api/webhook/dialogflow', dfHandler); // alias
 
-// ---------- Endpoints Excel ----------
-app.get('/api/reports/top-ofensores.xlsx', async (req, res) => {
-  try {
-    const start = req.query.start ? new Date(req.query.start).toISOString() : new Date(Date.now() - 30 * 864e5).toISOString();
-    const end = req.query.end ? new Date(req.query.end).toISOString() : new Date().toISOString();
-    const companyId = Number(req.query.companyId || 0);
-
-    const params = [start, end];
-    let clause = '';
-    if (companyId) { clause = ' AND op.embarcador_id = $3'; params.push(companyId); }
-
-    const q = `
-      SELECT emb.nome_principal AS embarcador, COUNT(*) AS qtd
-      FROM operacoes op
-      JOIN embarcadores emb ON op.embarcador_id = emb.id
-      WHERE op.previsao_inicio_atendimento BETWEEN $1 AND $2
-        AND (
-          (op.dt_inicio_execucao > op.previsao_inicio_atendimento)
-          OR (op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW())
-        )
-      ${clause}
-      GROUP BY 1
-      ORDER BY qtd DESC
-      LIMIT 10;`;
-
-    const { rows } = await db.query(q, params);
-
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Top Ofensores');
-    ws.columns = [
-      { header: 'Posição', key: 'pos', width: 10 },
-      { header: 'Embarcador', key: 'embarcador', width: 40 },
-      { header: 'Qtd Atrasos', key: 'qtd', width: 15 },
-      { header: 'Período', key: 'periodo', width: 25 },
-    ];
-    rows.forEach((r, i) => ws.addRow({ pos: i + 1, embarcador: r.embarcador, qtd: r.qtd, periodo: `${start.slice(0,10)} a ${end.slice(0,10)}` }));
-    ws.getRow(1).font = { bold: true };
-
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="top-ofensores_${start.slice(0,10)}_${end.slice(0,10)}.xlsx"`);
-    await wb.xlsx.write(res);
-    res.end();
-  } catch (e) {
-    console.error('excel top-ofensores', e);
-    res.status(500).send('Erro ao gerar Excel');
-  }
-});
-
-app.get('/api/reports/atrasos.xlsx', async (req, res) => {
-  try {
-    const start = req.query.start ? new Date(req.query.start).toISOString() : new Date(Date.now() - 30 * 864e5).toISOString();
-    const end = req.query.end ? new Date(req.query.end).toISOString() : new Date().toISOString();
-    const companyId = Number(req.query.companyId || 0);
-
-    const params = [start, end];
-    let clause = '';
-    if (companyId) { clause = ' AND op.embarcador_id = $3'; params.push(companyId); }
-
-    const q = `
-      SELECT COUNT(*) FILTER (WHERE op.dt_inicio_execucao > op.previsao_inicio_atendimento) AS iniciadas_atrasadas,
-             COUNT(*) FILTER (WHERE op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW()) AS nao_iniciadas_atrasadas,
-             COUNT(*) AS total
-      FROM operacoes op
-      WHERE op.previsao_inicio_atendimento BETWEEN $1 AND $2
-      ${clause};`;
-
-    const { rows } = await db.query(q, params);
-    const r = rows[0] || { iniciadas_atrasadas: 0, nao_iniciadas_atrasadas: 0, total: 0 };
-
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Resumo Atrasos');
-    ws.columns = [
-      { header: 'Período', key: 'periodo', width: 25 },
-      { header: 'Iniciadas com atraso', key: 'ini', width: 22 },
-      { header: 'Não iniciadas e vencidas', key: 'nao', width: 28 },
-      { header: 'Total', key: 'total', width: 10 },
-    ];
-    ws.addRow({ periodo: `${start.slice(0,10)} a ${end.slice(0,10)}`, ini: r.iniciadas_atrasadas, nao: r.nao_iniciadas_atrasadas, total: r.total });
-    ws.getRow(1).font = { bold: true };
-
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="atrasos_${start.slice(0,10)}_${end.slice(0,10)}.xlsx"`);
-    await wb.xlsx.write(res);
-    res.end();
-  } catch (e) {
-    console.error('excel atrasos', e);
-    res.status(500).send('Erro ao gerar Excel');
-  }
-});
-
-// ---------- Rotas existentes ----------
-const userRoutes       = require('./api/userRoutes');
-const operationRoutes  = require('./api/operationRoutes');
-const embarcadorRoutes = require('./api/embarcadorRoutes');
-const dashboardRoutes  = require('./api/dashboardRoutes');
-const clientRoutes     = require('./api/clientRoutes');
-
+// --------- Health & raiz ---------
+app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa 🚀'));
-app.use('/api/users', userRoutes);
-app.use('/api/operations', operationRoutes);
-app.use('/api/embarcadores', embarcadorRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/client', clientRoutes);
 
-// 404 + erro
-app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
+// --------- Montagem das rotas ---------
+const userRoutes        = require('./api/userRoutes');
+const operationRoutes   = require('./api/operationRoutes');
+const embarcadorRoutes  = require('./api/embarcadorRoutes');
+const dashboardRoutes   = require('./api/dashboardRoutes');
+const clientRoutes      = require('./api/clientRoutes');
+const reportsRoutes     = require('./api/reportsRoutes');
+const aiRoutes          = require('./api/aiRoutes'); // <= NOVO
+
+app.use('/api/users',        userRoutes);
+app.use('/api/operations',   operationRoutes);
+app.use('/api/embarcadores', embarcadorRoutes);
+app.use('/api/dashboard',    dashboardRoutes);
+app.use('/api/client',       clientRoutes);
+app.use('/api/reports',      reportsRoutes);
+app.use('/api/ai',           aiRoutes); // <= monta /api/ai/analyze
+
+// --------- 404 + handler de erro ---------
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  return res.status(404).json({ error: 'Not found' });
+});
+
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+  res.status(err.status || 500).json({ error: err.message || 'Internal error' });
 });
 
-// ---------- Start ----------
+// --------- Start ---------
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`API up on :${PORT}`));

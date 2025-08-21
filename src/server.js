@@ -3,114 +3,76 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const ExcelJS = require('exceljs');                 // <- você usa nos endpoints de Excel
+const db = require('./config/database');            // pool do Postgres
 
-// Pool do Postgres
-const db = require('./config/database');
+// ---------- App & CORS ----------
+const app = express();
+app.set('trust proxy', 1);
 
 const allowedOrigins = [
-  process.env.FRONT_ORIGIN,
-  'https://tracking-r.netlify.app',
+  process.env.FRONT_ORIGIN,                         // opcional via .env
+  'https://tracking-r.netlify.app',                 // seu Netlify
   'http://localhost:5500',
   'http://127.0.0.1:5500'
-];
+].filter(Boolean);
 
 const corsOptions = {
   origin(origin, cb) {
-    // requests sem Origin (ex: curl) ou da mesma origem passam
+    // Permite chamadas sem Origin (ex.: curl) e as origens liberadas acima
     if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
     return cb(new Error(`CORS: origem não permitida: ${origin}`));
   },
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   allowedHeaders: 'Authorization, Content-Type, X-Requested-With',
-  credentials: false,          // estamos usando Bearer token, não cookies
+  credentials: false,                               // usamos Bearer Token, não cookies
   optionsSuccessStatus: 204
 };
 
-app.options('*', cors(corsOptions));
 app.use(cors(corsOptions));
-
-
-// Rotas
-const userRoutes        = require('./api/userRoutes');
-const operationRoutes   = require('./api/operationRoutes');
-const embarcadorRoutes  = require('./api/embarcadorRoutes');
-const dashboardRoutes   = require('./api/dashboardRoutes');
-const clientRoutes      = require('./api/clientRoutes');
-const reportsRoutes = require('./api/reportsRoutes');
-
-const app = express();
-app.set('trust proxy', 1);
-
-// CORS liberal (frontend Netlify + Messenger)
-app.use(cors({
-  origin: ['https://seu-site.netlify.app', 'http://localhost:5500'], // ajuste
-  credentials: true,
-  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization','X-Auth-Token']
-}));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 
-// log simples
+// Log simples
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 });
 
-app.use('/api/reports', reportsRoutes);
-
-// -----------------------------
-// helpers
-// -----------------------------
+// ---------- Utils ----------
 function toBR(iso) { try { return new Date(iso).toLocaleDateString('pt-BR'); } catch { return iso; } }
-function fmtFull(iso) { try { return new Date(iso).toLocaleString('pt-BR'); } catch { return iso || '—'; } }
-
-// monta a base pública para links absolutos
-function getBaseUrl(req) {
-  return process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
-}
-
-// normaliza container removendo tudo que não for letra/número
-function sanitizeContainer(s) {
-  return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-}
-
+function getBaseUrl(req) { return process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`; }
+function sanitizeContainer(s) { return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
 const CONTAINER_RE = /([A-Za-z]{4}\s*-?\s*\d{3}\s*-?\s*\d{4})/i;
 
 // session-id do Dialogflow Messenger:
 // - cliente: client:<companyId>:<email>
 // - admin:   admin:0:<email>
 function parseSession(req) {
-  const sessionPath = req.body?.session || ''; // projects/.../sessions/client:123:user
+  const sessionPath = req.body?.session || '';
   const sessionId = sessionPath.split('/').pop() || '';
   const [role = 'client', companyStr = '0'] = sessionId.split(':');
   const companyId = Number(companyStr) || 0;
   return { role, companyId, sessionId };
 }
-
 function companyFilter(alias, nextParamIndex, role, companyId) {
   if (role === 'client' && companyId > 0) {
     return { clause: ` AND ${alias}.embarcador_id = $${nextParamIndex}`, value: companyId };
   }
   return { clause: '', value: null };
 }
-
-// botão (richContent) para Dialogflow Messenger
 function dfButton(link, text) {
   return {
     payload: {
-      richContent: [[
-        { type: 'button', text, link, icon: { type: 'chevron_right' } }
-      ]]
+      richContent: [[{ type: 'button', text, link, icon: { type: 'chevron_right' } }]]
     }
   };
 }
 
-// -----------------------------
-// Webhook Dialogflow
-// -----------------------------
+// ---------- Webhook Dialogflow ----------
 const dfHandler = async (req, res) => {
   try {
-    // auth opcional por header
+    // auth opcional do webhook (via header)
     if (process.env.DF_TOKEN) {
       const got = req.get('x-dialogflow-token');
       if (got !== process.env.DF_TOKEN) {
@@ -121,20 +83,16 @@ const dfHandler = async (req, res) => {
     const { role, companyId } = parseSession(req);
     const intentName = (req.body?.queryResult?.intent?.displayName || '').replace(/\s+/g, '');
     const p = req.body?.queryResult?.parameters || {};
-
-    // parâmetros normalizados para booking/container
     const booking   = (p.booking || p.booking_code || p['booking-code'] || '').toString().trim();
     const contRaw   = (p.container || p.container_code || p['container-code'] || '').toString().trim();
     const container = sanitizeContainer(contRaw);
 
-    // health
+    // healthcheck
     if (intentName === 'Ping') {
       return res.json({ fulfillmentText: 'Webhook OK! ✅' });
     }
 
-    // -----------------
-    // RastrearCarga
-    // -----------------
+    // ----- RastrearCarga -----
     if (intentName === 'RastrearCarga') {
       if (!booking && !container) {
         return res.json({ fulfillmentText: 'Me diga o *booking* ou o número do *container* para eu rastrear 🙂' });
@@ -151,8 +109,8 @@ const dfHandler = async (req, res) => {
              OR  ($2 <> '' AND REPLACE(REPLACE(op.containers,'-',''),' ','') ILIKE $2))
                ${filter.clause}
         ORDER BY op.id DESC
-        LIMIT 3;
-      `;
+        LIMIT 3;`;
+
       const params = [
         booking ? `%${booking}%` : '',
         container ? `%${container}%` : ''
@@ -170,22 +128,17 @@ const dfHandler = async (req, res) => {
         const fim = r.dt_fim_execucao ? new Date(r.dt_fim_execucao).toLocaleString('pt-BR') : 'N/A';
         const rec = r.dt_previsao_entrega_recalculada ? new Date(r.dt_previsao_entrega_recalculada).toLocaleString('pt-BR') : 'N/A';
         return `• **${r.tipo_programacao} — ${r.status_operacao}**
-          Embarcador: ${r.embarcador}
-          Booking: ${r.booking} | Contêiner(es): ${r.containers}
-          Prev/Atend: ${pre}
-          Início: ${ini} | Fim: ${fim}
-          Prev. Entrega (recalc): ${rec}`;
+Embarcador: ${r.embarcador}
+Booking: ${r.booking} | Contêiner(es): ${r.containers}
+Prev/Atend: ${pre}
+Início: ${ini} | Fim: ${fim}
+Prev. Entrega (recalc): ${rec}`;
       });
 
-      return res.json({
-        fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}`
-      });
+      return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
     }
 
-
-    // -----------------
-    // TopOfensores  (texto + botão Excel)
-    // -----------------
+    // ----- TopOfensores -----
     if (intentName === 'TopOfensores') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
@@ -216,7 +169,7 @@ const dfHandler = async (req, res) => {
 
       const txt = rows.map((r, i) => `${i + 1}. ${r.embarcador}: ${r.qtd}`).join('\n');
       const base = getBaseUrl(req);
-      const link = `${base}/api/reports/top-ofensores.xlsx?start=${start.slice(0, 10)}&end=${end.slice(0, 10)}${(role === 'client' && companyId) ? `&companyId=${companyId}` : ''}`;
+      const link = `${base}/api/reports/top-ofensores.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
 
       return res.json({
         fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}):\n${txt}`,
@@ -224,9 +177,7 @@ const dfHandler = async (req, res) => {
       });
     }
 
-    // -----------------
-    // RelatorioPeriodo (tipo: atrasos)  (texto + botão Excel)
-    // -----------------
+    // ----- RelatorioPeriodo (atrasos) -----
     if (intentName === 'RelatorioPeriodo') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
@@ -250,7 +201,7 @@ const dfHandler = async (req, res) => {
         const r = rows[0] || { iniciadas_atrasadas: 0, nao_iniciadas_atrasadas: 0, total: 0 };
 
         const base = getBaseUrl(req);
-        const link = `${base}/api/reports/atrasos.xlsx?start=${start.slice(0, 10)}&end=${end.slice(0, 10)}${(role === 'client' && companyId) ? `&companyId=${companyId}` : ''}`;
+        const link = `${base}/api/reports/atrasos.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
 
         return res.json({
           fulfillmentText:
@@ -265,48 +216,36 @@ const dfHandler = async (req, res) => {
       return res.json({ fulfillmentText: 'Relatório ainda não implementado. Tente “atrasos” ou “top ofensores”.' });
     }
 
-    // -----------------
-    // PLANO B: detectar container/booking no texto quando nenhuma intent casa
-    // -----------------
+    // ----- Plano B: detectar container/booking no texto livre -----
     try {
       const qtext = (req.body?.queryResult?.queryText || '').trim();
-
-      // tenta detectar container; se não houver, tenta algo que pareça booking
-      const mCont = qtext.match(CONTAINER_RE);                                 // ex.: TLLU4449470 | TLLU 444 9470
-      const mBook = qtext.match(/(?:\bbooking\s*)?([A-Za-z0-9-]{6,20})/i);      // ex.: P10474544
-
+      const mCont = qtext.match(CONTAINER_RE);
+      const mBook = qtext.match(/(?:\bbooking\s*)?([A-Za-z0-9-]{6,20})/i);
       const container2 = mCont ? sanitizeContainer(mCont[1]) : '';
       const booking2 = (!mCont && mBook) ? mBook[1] : '';
 
-      // se não achou nada mesmo, deixa cair no fallback padrão
-      if (!container2 && !booking2) {
-        // não retorna aqui: deixa seguir para o fallback padrão do webhook
-      } else {
-        const params2 = [
-          booking2 ? `%${booking2}%` : '',
-          container2 ? `%${container2}%` : ''
-        ];
+      if (container2 || booking2) {
+        const params2 = [booking2 ? `%${booking2}%` : '', container2 ? `%${container2}%` : ''];
         const filt2 = companyFilter('op', params2.length + 1, role, companyId);
         if (filt2.value !== null) params2.push(filt2.value);
 
         const sql2 = `
           SELECT emb.nome_principal AS embarcador, op.status_operacao,
-                op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
-                op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
-          FROM operacoes op
-          JOIN embarcadores emb ON op.embarcador_id = emb.id
-          WHERE (
-            ($1 <> '' AND op.booking ILIKE $1)
-            OR ($2 <> '' AND regexp_replace(op.containers, '[^A-Za-z0-9]', '', 'g') ILIKE $2)
-          )
-          ${filt2.clause}
-          ORDER BY op.id DESC
-          LIMIT 3;`;
+                 op.previsao_inicio_atendimento, op.dt_inicio_execucao, op.dt_fim_execucao,
+                 op.dt_previsao_entrega_recalculada, op.booking, op.containers, op.tipo_programacao
+            FROM operacoes op
+            JOIN embarcadores emb ON op.embarcador_id = emb.id
+           WHERE (
+             ($1 <> '' AND op.booking ILIKE $1)
+             OR ($2 <> '' AND regexp_replace(op.containers, '[^A-Za-z0-9]', '', 'g') ILIKE $2)
+           )
+           ${filt2.clause}
+           ORDER BY op.id DESC
+           LIMIT 3;`;
 
         const { rows } = await db.query(sql2, params2);
-
         if (rows.length) {
-          const fmt = (d) => (d ? new Date(d).toLocaleString('pt-BR') : '—');
+          const fmt = d => (d ? new Date(d).toLocaleString('pt-BR') : '—');
           const lines = rows.map(r =>
             `• ${r.tipo_programacao} — ${r.status_operacao || 'Sem status'}\n` +
             `  Embarcador: ${r.embarcador}\n` +
@@ -315,31 +254,26 @@ const dfHandler = async (req, res) => {
           );
           return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
         }
-
-        // não encontrou nada -> responde de forma amigável
         return res.json({ fulfillmentText: 'Não encontrei essa carga. Confere o código?' });
       }
     } catch (e) {
       console.error('Plano B (fallback detect) error:', e);
-      // se der erro, deixa cair no fallback padrão logo abaixo
     }
 
-
-    // fallback padrão
-    const intentOriginal = req.body?.queryResult?.intent?.displayName || '';
-    return res.json({ fulfillmentText: `Recebi a intent: ${intentOriginal || 'desconhecida'}` });
+    // Fallback padrão
+    const original = req.body?.queryResult?.intent?.displayName || '';
+    return res.json({ fulfillmentText: `Recebi a intent: ${original || 'desconhecida'}` });
   } catch (err) {
     console.error('Webhook error:', err);
     return res.json({ fulfillmentText: 'Erro no webhook.' });
   }
 };
 
-// rotas do webhook
+// Webhook
 app.post('/webhook/dialogflow', dfHandler);
+app.post('/api/webhook/dialogflow', dfHandler); // alias
 
-// -----------------------------
-// Endpoints Excel
-// -----------------------------
+// ---------- Endpoints Excel ----------
 app.get('/api/reports/top-ofensores.xlsx', async (req, res) => {
   try {
     const start = req.query.start ? new Date(req.query.start).toISOString() : new Date(Date.now() - 30 * 864e5).toISOString();
@@ -374,11 +308,11 @@ app.get('/api/reports/top-ofensores.xlsx', async (req, res) => {
       { header: 'Qtd Atrasos', key: 'qtd', width: 15 },
       { header: 'Período', key: 'periodo', width: 25 },
     ];
-    rows.forEach((r, i) => ws.addRow({ pos: i + 1, embarcador: r.embarcador, qtd: r.qtd, periodo: `${start.slice(0, 10)} a ${end.slice(0, 10)}` }));
+    rows.forEach((r, i) => ws.addRow({ pos: i + 1, embarcador: r.embarcador, qtd: r.qtd, periodo: `${start.slice(0,10)} a ${end.slice(0,10)}` }));
     ws.getRow(1).font = { bold: true };
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="top-ofensores_${start.slice(0, 10)}_${end.slice(0, 10)}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="top-ofensores_${start.slice(0,10)}_${end.slice(0,10)}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
   } catch (e) {
@@ -416,11 +350,11 @@ app.get('/api/reports/atrasos.xlsx', async (req, res) => {
       { header: 'Não iniciadas e vencidas', key: 'nao', width: 28 },
       { header: 'Total', key: 'total', width: 10 },
     ];
-    ws.addRow({ periodo: `${start.slice(0, 10)} a ${end.slice(0, 10)}`, ini: r.iniciadas_atrasadas, nao: r.nao_iniciadas_atrasadas, total: r.total });
+    ws.addRow({ periodo: `${start.slice(0,10)} a ${end.slice(0,10)}`, ini: r.iniciadas_atrasadas, nao: r.nao_iniciadas_atrasadas, total: r.total });
     ws.getRow(1).font = { bold: true };
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="atrasos_${start.slice(0, 10)}_${end.slice(0, 10)}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="atrasos_${start.slice(0,10)}_${end.slice(0,10)}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
   } catch (e) {
@@ -429,10 +363,13 @@ app.get('/api/reports/atrasos.xlsx', async (req, res) => {
   }
 });
 
-// endpoint do webhook
-app.post('/api/webhook/dialogflow', dfHandler);
+// ---------- Rotas existentes ----------
+const userRoutes       = require('./api/userRoutes');
+const operationRoutes  = require('./api/operationRoutes');
+const embarcadorRoutes = require('./api/embarcadorRoutes');
+const dashboardRoutes  = require('./api/dashboardRoutes');
+const clientRoutes     = require('./api/clientRoutes');
 
-// ============= Rotas da API existentes =============
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa 🚀'));
 app.use('/api/users', userRoutes);
 app.use('/api/operations', operationRoutes);
@@ -447,6 +384,6 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// start
+// ---------- Start ----------
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`API up on :${PORT}`));

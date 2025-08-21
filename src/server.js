@@ -19,7 +19,12 @@ const app = express();
 app.set('trust proxy', 1);
 
 // CORS liberal (frontend Netlify + Messenger)
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: ['https://seu-site.netlify.app', 'http://localhost:5500'], // ajuste
+  credentials: true,
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','X-Auth-Token']
+}));
 app.use(express.json());
 
 // log simples

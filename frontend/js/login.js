@@ -17,14 +17,21 @@ document.addEventListener('DOMContentLoaded', () => {
             const user = userCredential.user;
 
             // 2. Pega o token para se comunicar com nossa API
-            const idToken = await user.getIdToken();
+            const idToken = await user.getIdToken(true);
+
+            console.log('projectId(front):', firebase.app().options.projectId);
+            console.log('idToken prefix:', (idToken || '').slice(0, 14));
 
             // 3. Pergunta para a nossa API: "Quem é este usuário?"
             const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/users/me', {
-                headers: { 'Authorization': `Bearer ${idToken}` }
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${idToken}`,
+                    'Content-Type': 'application/json'
+                }
             });
             const profile = await response.json();
-            if (!response.ok) { throw new Error(profile.message); }
+            if (!response.ok) { throw new Error(profile.message || 'Falha no /me'); }
 
             // 4. Decide para onde redirecionar com base na resposta da API
             if (profile.role === 'admin') {

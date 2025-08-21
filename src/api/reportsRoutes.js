@@ -1,47 +1,15 @@
-// src/api/reportsRoutes.js
 const express = require('express');
 const router = express.Router();
 const reports = require('../controllers/reportsController');
 const authMiddleware = require('../middlewares/authMiddleware');
 const isAdmin        = require('../middlewares/adminMiddleware');
 
-// resolutores robustos para middlewares
-function resolveAuth() {
-  const candidates = [
-    '../middleware/authMiddleware',
-    '../../middleware/authMiddleware',
-    '../middlewares/authMiddleware',
-    '../../middlewares/authMiddleware'
-  ];
-  for (const p of candidates) { try {
-    const mod = require(p);
-    return mod.authMiddleware || mod.default || mod;
-  } catch {} }
-  throw new Error('authMiddleware não encontrado.');
-}
-function resolveIsAdmin() {
-  const candidates = [
-    '../middleware/adminMiddleware',
-    '../../middleware/adminMiddleware',
-    '../middlewares/adminMiddleware',
-    '../../middlewares/adminMiddleware'
-  ];
-  for (const p of candidates) { try {
-    const mod = require(p);
-    return mod.isAdmin || mod.default || mod; // suporta export direto ou nomeado
-  } catch {} }
-  throw new Error('adminMiddleware (isAdmin) não encontrado.');
-}
+// Admin-only
+router.get('/daily',               authMiddleware, isAdmin, reports.getDailyReport);
+router.get('/top-ofensores.xlsx',  authMiddleware, isAdmin, reports.topOffendersExcel);
+router.get('/atrasos.xlsx',        authMiddleware, isAdmin, reports.resumoAtrasosExcel);
 
-const authMiddleware = resolveAuth();
-const isAdmin = resolveIsAdmin();
-
-// ===== ROTAS (agora admin-only) =====
-router.get('/daily', authMiddleware, isAdmin, reports.getDailyReport);
-router.get('/top-ofensores.xlsx', authMiddleware, isAdmin, reports.topOffendersExcel);
-router.get('/atrasos.xlsx', authMiddleware, isAdmin, reports.resumoAtrasosExcel);
-
-// Webhook: se quiser, também pode proteger com token interno
+// Webhook (se quiser, proteja com token via header)
 router.post('/hooks/new-file', reports.webhookNewFile);
 
 module.exports = router;

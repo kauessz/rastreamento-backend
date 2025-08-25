@@ -3,10 +3,9 @@ require('dotenv').config();
 
 const path = require('path');
 const express = require('express');
-const cors = require('cors');
 
 // ------------------------------
-// PATCH: Guardas para paths inválidos (Router e App)
+// PATCH: Guardas para paths inválidos (Express App/Router)
 // ------------------------------
 (function patchExpressGuards() {
   function wrapRegister(target, label) {
@@ -16,20 +15,17 @@ const cors = require('cors');
       if (!orig || orig.__guarded) return;
       target[m] = function guarded(firstArg, ...rest) {
         try {
-          // app.use(fn) é válido sem path; Router.use(fn) idem.
           const isFn = typeof firstArg === 'function';
           const isObj = firstArg && typeof firstArg === 'object';
           const isRegExp = firstArg instanceof RegExp;
           const isArray = Array.isArray(firstArg);
 
-          // Se veio RegExp/Array/Fn/Obj, não validamos string e seguimos.
           if (!firstArg || isFn || isObj || isRegExp || isArray) {
             return orig.call(this, firstArg, ...rest);
           }
 
           if (typeof firstArg === 'string') {
             const pth = firstArg;
-            // Captura local do chamador (primeira linha sob /src/api/ ou /src/)
             const stack = new Error().stack || '';
             const caller = stack.split('\n').find(l =>
               l.includes(`${path.sep}src${path.sep}api${path.sep}`) ||
@@ -37,20 +33,17 @@ const cors = require('cors');
             );
             const where = caller ? caller.trim() : '(origem não detectada)';
 
-            // 1) URL absoluta (ERRADO)
             if (/^https?:\/\//i.test(pth)) {
-              console.error(`❌ [${label}.${m}] Rota com URL ABSOLUTA: "${pth}" em ${where}. NÃO será registrada.`);
-              return this; // skip
+              console.error(`❌ [${label}.${m}] URL ABSOLUTA: "${pth}" em ${where}. NÃO será registrada.`);
+              return this;
             }
-            // 2) path que não começa com "/"
             if (!pth.startsWith('/')) {
               console.error(`❌ [${label}.${m}] Path inválido (não começa com "/"): "${pth}" em ${where}. NÃO será registrada.`);
-              return this; // skip
+              return this;
             }
-            // 3) parâmetro sem nome "/:/" ou "/:" no fim
             if (/(^|\/):($|\/)/.test(pth)) {
               console.error(`❌ [${label}.${m}] Parâmetro sem nome no path: "${pth}" em ${where}. Ajuste para "/:id". NÃO será registrada.`);
-              return this; // skip
+              return this;
             }
           }
         } catch (e) {
@@ -62,7 +55,7 @@ const cors = require('cors');
     });
   }
 
-  // Patch em express.Router() protótipo
+  // Patch em express.Router protótipo
   const origRouter = express.Router;
   if (!origRouter.__patched) {
     express.Router = function patchedRouter(...args) {
@@ -74,20 +67,86 @@ const cors = require('cors');
     express.Router.__patched = true;
   }
 
-  // Patch no protótipo da aplicação (app.get/use/…)
+  // Patch no protótipo da aplicação
   const appProto = require('express/lib/application');
   wrapRegister(appProto, 'app');
 })();
 
 // ------------------------------
-// App básico
+// PATCH: Se alguém usa o pacote "router" (npm router), guardamos também
 // ------------------------------
+(function patchRouterPackage() {
+  try {
+    const RouterFactory = require('router'); // só carrega se existir
+    if (!RouterFactory || RouterFactory.__patched) return;
+
+    const wrapped = function (...args) {
+      const r = RouterFactory(...args);
+      const methods = ['get','post','put','delete','patch','all','use'];
+      methods.forEach((m) => {
+        const orig = r[m];
+        if (!orig || orig.__guarded) return;
+        r[m] = function guarded(firstArg, ...rest) {
+          try {
+            const isFn = typeof firstArg === 'function';
+            const isObj = firstArg && typeof firstArg === 'object';
+            const isRegExp = firstArg instanceof RegExp;
+            const isArray = Array.isArray(firstArg);
+
+            if (!firstArg || isFn || isObj || isRegExp || isArray) {
+              return orig.call(this, firstArg, ...rest);
+            }
+
+            if (typeof firstArg === 'string') {
+              const pth = firstArg;
+              const stack = new Error().stack || '';
+              const caller = stack.split('\n').find(l =>
+                l.includes(`${path.sep}src${path.sep}api${path.sep}`) ||
+                l.includes(`${path.sep}src${path.sep}`)
+              );
+              const where = caller ? caller.trim() : '(origem não detectada)';
+
+              if (/^https?:\/\//i.test(pth)) {
+                console.error(`❌ [routerPkg.${m}] URL ABSOLUTA: "${pth}" em ${where}. NÃO será registrada.`);
+                return this;
+              }
+              if (!pth.startsWith('/')) {
+                console.error(`❌ [routerPkg.${m}] Path inválido (não começa com "/"): "${pth}" em ${where}. NÃO será registrada.`);
+                return this;
+              }
+              if (/(^|\/):($|\/)/.test(pth)) {
+                console.error(`❌ [routerPkg.${m}] Parâmetro sem nome no path: "${pth}" em ${where}. NÃO será registrada.`);
+                return this;
+              }
+            }
+          } catch (e) {
+            console.error(`⚠️  Guard de rota falhou (routerPkg.${m}):`, e);
+          }
+          return orig.call(this, firstArg, ...rest);
+        };
+        r[m].__guarded = true;
+      });
+      return r;
+    };
+
+    // substitui o export do pacote
+    require.cache[require.resolve('router')].exports = wrapped;
+    wrapped.__patched = true;
+  } catch (_) {
+    // pacote "router" não instalado — tudo bem
+  }
+})();
+
+// ------------------------------
+// App
+// ------------------------------
+const cors = require('cors');
 const app = express();
 app.set('trust proxy', 1);
 
 // CORS
 const allowedOrigins = [
-  process.env.FRONT_ORIGIN,                 // ex.: https://tracking-r.netlify.app
+  process.env.FRONT_ORIGIN,
   'https://tracking-r.netlify.app',
   'http://localhost:5500',
   'http://127.0.0.1:5500'
@@ -107,7 +166,6 @@ app.use(cors({
   optionsSuccessStatus: 204
 }));
 app.options('*', cors());
-
 app.use(express.json());
 
 // Health
@@ -115,7 +173,7 @@ app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa 🚀'));
 
 // ------------------------------
-// Helpers p/ montagem segura
+// Helpers de montagem
 // ------------------------------
 function safeRequire(label, modPath) {
   try {
@@ -147,7 +205,7 @@ function safeMount(urlPath, modPath) {
 }
 
 // ------------------------------
-// Webhook Dialogflow (igual ao seu, enxuto)
+// Webhook Dialogflow (igual ao seu, resumido)
 // ------------------------------
 const db = require('./config/database');
 
@@ -170,18 +228,14 @@ function companyFilter(alias, nextParamIndex, role, companyId) {
   return { clause: '', value: null };
 }
 function dfButton(link, text) {
-  return {
-    payload: { richContent: [[{ type: 'button', text, link, icon: { type: 'chevron_right' } }]] }
-  };
+  return { payload: { richContent: [[{ type: 'button', text, link, icon: { type: 'chevron_right' } }]] } };
 }
 
 const dfHandler = async (req, res) => {
   try {
     if (process.env.DF_TOKEN) {
       const got = req.get('x-dialogflow-token');
-      if (got !== process.env.DF_TOKEN) {
-        return res.status(401).json({ fulfillmentText: 'Unauthorized' });
-      }
+      if (got !== process.env.DF_TOKEN) return res.status(401).json({ fulfillmentText: 'Unauthorized' });
     }
 
     const { role, companyId } = parseSession(req);
@@ -236,7 +290,6 @@ Prev. Entrega (recalc): ${rec}`;
       const params = [start, end];
       const filt = companyFilter('op', params.length + 1, role, companyId);
       if (filt.value !== null) params.push(filt.value);
-
       const q = `
         SELECT emb.nome_principal AS embarcador, COUNT(*) AS qtd
         FROM operacoes op
@@ -255,10 +308,7 @@ Prev. Entrega (recalc): ${rec}`;
       const txt = rows.map((r, i) => `${i + 1}. ${r.embarcador}: ${r.qtd}`).join('\n');
       const base = getBaseUrl(req);
       const link = `${base}/api/reports/top-ofensores.xlsx?start=${start.slice(0,10)}&end=${end.slice(0,10)}${(role==='client'&&companyId)?`&companyId=${companyId}`:''}`;
-      return res.json({
-        fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}):\n${txt}`,
-        fulfillmentMessages: [dfButton(link, 'Baixar Excel (Top 10)')]
-      });
+      return res.json({ fulfillmentText: `Top 10 (${toBR(start)}–${toBR(end)}):\n${txt}`, fulfillmentMessages: [dfButton(link, 'Baixar Excel (Top 10)')] });
     }
 
     if (intentName === 'RelatorioPeriodo') {
@@ -266,7 +316,6 @@ Prev. Entrega (recalc): ${rec}`;
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
       const end = period.endDate || new Date().toISOString();
       const tipo = (p.report_type || 'atrasos').toString();
-
       if (tipo === 'atrasos') {
         const params = [start, end];
         const filt = companyFilter('op', params.length + 1, role, companyId);
@@ -291,7 +340,6 @@ Prev. Entrega (recalc): ${rec}`;
           fulfillmentMessages: [dfButton(link, 'Baixar Excel (Resumo de Atrasos)')]
         });
       }
-
       return res.json({ fulfillmentText: 'Relatório ainda não implementado. Tente “atrasos” ou “top ofensores”.' });
     }
 
@@ -304,25 +352,42 @@ Prev. Entrega (recalc): ${rec}`;
 };
 
 app.post('/webhook/dialogflow', dfHandler);
-app.post('/api/webhook/dialogflow', dfHandler); // alias
+app.post('/api/webhook/dialogflow', dfHandler);
 
 // ------------------------------
-// Montagem das rotas (cada uma com try/catch + logs)
+// Montagem das rotas
 // ------------------------------
-function mountAll() {
-  [
-    ['/api/users',        './api/userRoutes'],
-    ['/api/operations',   './api/operationRoutes'],
-    ['/api/embarcadores', './api/embarcadorRoutes'],
-    ['/api/dashboard',    './api/dashboardRoutes'],
-    ['/api/client',       './api/clientRoutes'],
-    ['/api/reports',      './api/reportsRoutes'],
-    // Se recriar IA depois: ['/api/ai', './api/aiRoutes'],
-  ].forEach(([base, mod]) => safeMount(base, mod));
+function safeMount(urlPath, modPath) {
+  try {
+    if (typeof urlPath !== 'string' || !urlPath.startsWith('/')) {
+      console.error(`❌ Path inválido ao montar rotas: "${urlPath}". Deve começar com "/". Ignorando.`);
+      return;
+    }
+    const mod = (() => { try { return require(modPath); } catch (e) {
+      console.error(`❌ Falha ao dar require em ${urlPath} (${modPath}):\n`, e && e.stack || e);
+      return null;
+    }})();
+    if (!mod) return;
+    const ok = typeof mod === 'function' || (mod && typeof mod.use === 'function');
+    if (!ok) { console.error(`❌ Módulo não é Router válido: ${modPath}`); return; }
+    app.use(urlPath, mod);
+    console.log(`✅ Rotas montadas em ${urlPath} ← ${modPath}`);
+  } catch (err) {
+    console.error(`❌ Erro ao montar ${urlPath} (${modPath}):\n`, err && err.stack || err);
+  }
 }
-mountAll();
 
-// 404 + handler de erro
+[
+  ['/api/users',        './api/userRoutes'],
+  ['/api/operations',   './api/operationRoutes'],
+  ['/api/embarcadores', './api/embarcadorRoutes'],
+  ['/api/dashboard',    './api/dashboardRoutes'],
+  ['/api/client',       './api/clientRoutes'],
+  ['/api/reports',      './api/reportsRoutes'],
+  // ['/api/ai', './api/aiRoutes'], // se recriar IA depois
+].forEach(([base, mod]) => safeMount(base, mod));
+
+// 404 + handler
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, _req, res, _next) => {
   console.error('🔥 Unhandled error:', err && err.stack || err);

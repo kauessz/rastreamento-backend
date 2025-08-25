@@ -5,61 +5,89 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 
-// ---------- PATCH: Detector de rotas inválidas ----------
-// (executa ANTES de qualquer require de rotas)
-(function patchExpressRouter() {
+// ------------------------------
+// PATCH: Guardas para paths inválidos (Router e App)
+// ------------------------------
+(function patchExpressGuards() {
+  function wrapRegister(target, label) {
+    const methods = ['get','post','put','delete','patch','all','use'];
+    methods.forEach((m) => {
+      const orig = target[m];
+      if (!orig || orig.__guarded) return;
+      target[m] = function guarded(firstArg, ...rest) {
+        try {
+          // app.use(fn) é válido sem path; Router.use(fn) idem.
+          const isFn = typeof firstArg === 'function';
+          const isObj = firstArg && typeof firstArg === 'object';
+          const isRegExp = firstArg instanceof RegExp;
+          const isArray = Array.isArray(firstArg);
+
+          // Se veio RegExp/Array/Fn/Obj, não validamos string e seguimos.
+          if (!firstArg || isFn || isObj || isRegExp || isArray) {
+            return orig.call(this, firstArg, ...rest);
+          }
+
+          if (typeof firstArg === 'string') {
+            const pth = firstArg;
+            // Captura local do chamador (primeira linha sob /src/api/ ou /src/)
+            const stack = new Error().stack || '';
+            const caller = stack.split('\n').find(l =>
+              l.includes(`${path.sep}src${path.sep}api${path.sep}`) ||
+              l.includes(`${path.sep}src${path.sep}`)
+            );
+            const where = caller ? caller.trim() : '(origem não detectada)';
+
+            // 1) URL absoluta (ERRADO)
+            if (/^https?:\/\//i.test(pth)) {
+              console.error(`❌ [${label}.${m}] Rota com URL ABSOLUTA: "${pth}" em ${where}. NÃO será registrada.`);
+              return this; // skip
+            }
+            // 2) path que não começa com "/"
+            if (!pth.startsWith('/')) {
+              console.error(`❌ [${label}.${m}] Path inválido (não começa com "/"): "${pth}" em ${where}. NÃO será registrada.`);
+              return this; // skip
+            }
+            // 3) parâmetro sem nome "/:/" ou "/:" no fim
+            if (/(^|\/):($|\/)/.test(pth)) {
+              console.error(`❌ [${label}.${m}] Parâmetro sem nome no path: "${pth}" em ${where}. Ajuste para "/:id". NÃO será registrada.`);
+              return this; // skip
+            }
+          }
+        } catch (e) {
+          console.error(`⚠️  Guard de rota falhou (${label}.${m}):`, e);
+        }
+        return orig.call(this, firstArg, ...rest);
+      };
+      target[m].__guarded = true;
+    });
+  }
+
+  // Patch em express.Router() protótipo
   const origRouter = express.Router;
   if (!origRouter.__patched) {
     express.Router = function patchedRouter(...args) {
       const router = origRouter.apply(this, args);
-      const methods = ['get','post','put','delete','patch','all','use'];
-      for (const m of methods) {
-        const orig = router[m].bind(router);
-        router[m] = function (p, ...handlers) {
-          try {
-            // permite RegExp e arrays de paths normalmente
-            if (typeof p === 'string') {
-              const stack = new Error().stack || '';
-              // tenta achar o arquivo chamador
-              const caller = stack.split('\n').find(l => l.includes(path.sep + 'api' + path.sep));
-              const where = caller ? caller.trim() : '(localização não detectada)';
-
-              // 1) URL absoluta (ERRADO)
-              if (/^https?:\/\//i.test(p)) {
-                console.error(`❌ Rota com URL absoluta detectada (${m.toUpperCase()} "${p}") em ${where}. NÃO será registrada.`);
-                return router; // skip
-              }
-              // 2) path vazio / inválido
-              if (!p.startsWith('/')) {
-                console.error(`❌ Path inválido (não começa com "/") (${m.toUpperCase()} "${p}") em ${where}. NÃO será registrada.`);
-                return router; // skip
-              }
-              // 3) parâmetro sem nome "/:/" ou "/:" no fim
-              if (/(^|\/):($|\/)/.test(p)) {
-                console.error(`❌ Parâmetro sem nome no path (${m.toUpperCase()} "${p}") em ${where}. Ajuste para "/:id" etc. NÃO será registrada.`);
-                return router; // skip
-              }
-            }
-          } catch (e) {
-            console.error('Detector de rotas: falhou ao inspecionar path:', e);
-          }
-          return orig(p, ...handlers);
-        };
-      }
+      wrapRegister(router, 'router');
       router.__patched = true;
       return router;
     };
     express.Router.__patched = true;
   }
+
+  // Patch no protótipo da aplicação (app.get/use/…)
+  const appProto = require('express/lib/application');
+  wrapRegister(appProto, 'app');
 })();
 
-// ---------- App ----------
+// ------------------------------
+// App básico
+// ------------------------------
 const app = express();
 app.set('trust proxy', 1);
 
-// ---------- CORS ----------
+// CORS
 const allowedOrigins = [
-  process.env.FRONT_ORIGIN,                   // ex: https://tracking-r.netlify.app
+  process.env.FRONT_ORIGIN,                 // ex.: https://tracking-r.netlify.app
   'https://tracking-r.netlify.app',
   'http://localhost:5500',
   'http://127.0.0.1:5500'
@@ -79,13 +107,16 @@ app.use(cors({
   optionsSuccessStatus: 204
 }));
 app.options('*', cors());
+
 app.use(express.json());
 
-// ---------- Health ----------
+// Health
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa 🚀'));
 
-// ---------- Utils p/ montagem segura ----------
+// ------------------------------
+// Helpers p/ montagem segura
+// ------------------------------
 function safeRequire(label, modPath) {
   try {
     const mod = require(modPath);
@@ -115,7 +146,9 @@ function safeMount(urlPath, modPath) {
   }
 }
 
-// ---------- Webhook do Dialogflow ----------
+// ------------------------------
+// Webhook Dialogflow (igual ao seu, enxuto)
+// ------------------------------
 const db = require('./config/database');
 
 function toBR(iso) { try { return new Date(iso).toLocaleDateString('pt-BR'); } catch { return iso; } }
@@ -138,9 +171,7 @@ function companyFilter(alias, nextParamIndex, role, companyId) {
 }
 function dfButton(link, text) {
   return {
-    payload: {
-      richContent: [[{ type: 'button', text, link, icon: { type: 'chevron_right' } }]]
-    }
+    payload: { richContent: [[{ type: 'button', text, link, icon: { type: 'chevron_right' } }]] }
   };
 }
 
@@ -160,11 +191,8 @@ const dfHandler = async (req, res) => {
     const contRaw   = (p.container || p.container_code || p['container-code'] || '').toString().trim();
     const container = sanitizeContainer(contRaw);
 
-    if (intentName === 'Ping') {
-      return res.json({ fulfillmentText: 'Webhook OK! ✅' });
-    }
+    if (intentName === 'Ping') return res.json({ fulfillmentText: 'Webhook OK! ✅' });
 
-    // RastrearCarga
     if (intentName === 'RastrearCarga') {
       if (!booking && !container) {
         return res.json({ fulfillmentText: 'Me diga o *booking* ou o número do *container* para eu rastrear 🙂' });
@@ -201,7 +229,6 @@ Prev. Entrega (recalc): ${rec}`;
       return res.json({ fulfillmentText: `Aqui está o que encontrei:\n\n${lines.join('\n\n')}` });
     }
 
-    // TopOfensores
     if (intentName === 'TopOfensores') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
@@ -209,6 +236,7 @@ Prev. Entrega (recalc): ${rec}`;
       const params = [start, end];
       const filt = companyFilter('op', params.length + 1, role, companyId);
       if (filt.value !== null) params.push(filt.value);
+
       const q = `
         SELECT emb.nome_principal AS embarcador, COUNT(*) AS qtd
         FROM operacoes op
@@ -233,12 +261,12 @@ Prev. Entrega (recalc): ${rec}`;
       });
     }
 
-    // RelatorioPeriodo (atrasos)
     if (intentName === 'RelatorioPeriodo') {
       const period = p['date-period'] || {};
       const start = period.startDate || new Date(Date.now() - 30 * 864e5).toISOString();
       const end = period.endDate || new Date().toISOString();
       const tipo = (p.report_type || 'atrasos').toString();
+
       if (tipo === 'atrasos') {
         const params = [start, end];
         const filt = companyFilter('op', params.length + 1, role, companyId);
@@ -263,10 +291,10 @@ Prev. Entrega (recalc): ${rec}`;
           fulfillmentMessages: [dfButton(link, 'Baixar Excel (Resumo de Atrasos)')]
         });
       }
+
       return res.json({ fulfillmentText: 'Relatório ainda não implementado. Tente “atrasos” ou “top ofensores”.' });
     }
 
-    // Fallback simples
     const original = req.body?.queryResult?.intent?.displayName || '';
     return res.json({ fulfillmentText: `Recebi a intent: ${original || 'desconhecida'}` });
   } catch (err) {
@@ -278,22 +306,29 @@ Prev. Entrega (recalc): ${rec}`;
 app.post('/webhook/dialogflow', dfHandler);
 app.post('/api/webhook/dialogflow', dfHandler); // alias
 
-// ---------- Montagem das rotas (com try/catch + logs) ----------
-safeMount('/api/users',        './api/userRoutes');
-safeMount('/api/operations',   './api/operationRoutes');
-safeMount('/api/embarcadores', './api/embarcadorRoutes');
-safeMount('/api/dashboard',    './api/dashboardRoutes');
-safeMount('/api/client',       './api/clientRoutes');
-safeMount('/api/reports',      './api/reportsRoutes');
-// (Se recriar a IA) safeMount('/api/ai', './api/aiRoutes');
+// ------------------------------
+// Montagem das rotas (cada uma com try/catch + logs)
+// ------------------------------
+function mountAll() {
+  [
+    ['/api/users',        './api/userRoutes'],
+    ['/api/operations',   './api/operationRoutes'],
+    ['/api/embarcadores', './api/embarcadorRoutes'],
+    ['/api/dashboard',    './api/dashboardRoutes'],
+    ['/api/client',       './api/clientRoutes'],
+    ['/api/reports',      './api/reportsRoutes'],
+    // Se recriar IA depois: ['/api/ai', './api/aiRoutes'],
+  ].forEach(([base, mod]) => safeMount(base, mod));
+}
+mountAll();
 
-// ---------- 404 + handler ----------
+// 404 + handler de erro
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, _req, res, _next) => {
   console.error('🔥 Unhandled error:', err && err.stack || err);
   res.status(500).json({ error: 'Internal error' });
 });
 
-// ---------- Start ----------
+// Start
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`API up on :${PORT}`));

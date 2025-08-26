@@ -37,7 +37,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.options('/(.*)', cors(corsOptions)); // casa qualquer caminho
 
 // ===== Segurança / Perf (opcionais) =====
 if (helmet) {

@@ -1,32 +1,112 @@
 <!doctype html>
 <html lang="pt-BR">
+
 <head>
   <meta charset="utf-8" />
   <title>Relatórios (Admin)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { color-scheme: dark; }
-    body { font-family: Inter, system-ui, Arial, sans-serif; margin: 0; background:#0f1115; color:#e6e6e6; }
-    header { display:flex; justify-content:space-between; align-items:center; padding:16px 20px; border-bottom:1px solid #1d2230; position:sticky; top:0; background:#0f1115; }
-    .brand { font-weight:600; letter-spacing:.2px; }
-    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
-    .card { background:#121522; border:1px solid #1d2230; border-radius:16px; padding:16px; box-shadow: 0 10px 24px rgba(0,0,0,.25); }
-    .grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); }
-    label { font-size:12px; color:#a4acc4; display:block; margin-bottom:6px; }
-    input[type="date"], input[type="number"], input[type="text"] {
-      width: 100%; background:#0f1320; color:#e6e6e6; border:1px solid #212842;
-      border-radius:10px; padding:10px 12px; outline:none;
+    :root {
+      color-scheme: dark;
     }
-    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:end; }
+
+    body {
+      font-family: Inter, system-ui, Arial, sans-serif;
+      margin: 0;
+      background: #0f1115;
+      color: #e6e6e6;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-bottom: 1px solid #1d2230;
+      position: sticky;
+      top: 0;
+      background: #0f1115;
+    }
+
+    .brand {
+      font-weight: 600;
+      letter-spacing: .2px;
+    }
+
+    .wrap {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 16px;
+    }
+
+    .card {
+      background: #121522;
+      border: 1px solid #1d2230;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, .25);
+    }
+
+    .grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    label {
+      font-size: 12px;
+      color: #a4acc4;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    input[type="date"],
+    input[type="number"],
+    input[type="text"] {
+      width: 100%;
+      background: #0f1320;
+      color: #e6e6e6;
+      border: 1px solid #212842;
+      border-radius: 10px;
+      padding: 10px 12px;
+      outline: none;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: end;
+    }
+
     button {
-      background:#2b5cff; color:#fff; border:none; border-radius:10px; padding:10px 14px;
-      cursor:pointer; font-weight:600;
+      background: #2b5cff;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 600;
     }
-    button.ghost { background:transparent; border:1px solid #2b5cff; color:#cbd6ff; }
-    button:disabled { opacity:.6; cursor:not-allowed; }
-    .muted { color:#9aa6bf; font-size:12px; }
+
+    button.ghost {
+      background: transparent;
+      border: 1px solid #2b5cff;
+      color: #cbd6ff;
+    }
+
+    button:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+
+    .muted {
+      color: #9aa6bf;
+      font-size: 12px;
+    }
   </style>
 </head>
+
 <body>
   <header>
     <div class="brand">📊 Relatórios — Admin</div>
@@ -56,6 +136,16 @@
         <button id="btnAtrasos">Excel — Resumo de Atrasos</button>
       </div>
     </section>
+    <section class="card" style="margin-bottom:16px">
+      <label>Comando (mini-IA)</label>
+      <input id="cmd" type="text" placeholder='ex.: "me envie o diario de bordo do cliente Totalplast"' />
+      <div class="row" style="margin-top:8px">
+        <input id="fileFonte" type="file" accept=".xlsx,.xls" style="display:none" />
+        <input id="fileInfo" type="file" accept=".xlsx,.xls" style="display:none" />
+        <button id="btnCmd">Executar comando</button>
+        <span class="muted">Quando pedir "diário de bordo", vou solicitar 2 planilhas e devolver um PDF.</span>
+      </div>
+    </section>
 
     <section class="card">
       <div id="log" class="muted">Pronto para gerar relatórios…</div>
@@ -67,4 +157,5 @@
   <script src="js/firebase-init.js"></script>
   <script src="./admin-reports.js"></script>
 </body>
+
 </html>

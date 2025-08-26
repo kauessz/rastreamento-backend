@@ -7,9 +7,9 @@
 
   // datas padrão (últimos 30 dias)
   const end = new Date();
-  const start = new Date(Date.now() - 30*864e5);
-  $('start').value = start.toISOString().slice(0,10);
-  $('end').value = end.toISOString().slice(0,10);
+  const start = new Date(Date.now() - 30 * 864e5);
+  $('start').value = start.toISOString().slice(0, 10);
+  $('end').value = end.toISOString().slice(0, 10);
   $('companyId').value = 0;
 
   let currentToken = null;
@@ -21,7 +21,7 @@
       log(`Autenticado como ${user.email}.`);
     } catch (e) {
       console.error(e);
-      alert('Falha ao obter token. Faça login novamente.'); 
+      alert('Falha ao obter token. Faça login novamente.');
       window.location.href = 'login.html';
     }
   });
@@ -36,7 +36,7 @@
 
     const resp = await fetch(url, { headers: { Authorization: `Bearer ${currentToken}` } });
     if (!resp.ok) {
-      const t = await resp.text().catch(()=> '');
+      const t = await resp.text().catch(() => '');
       throw new Error(`HTTP ${resp.status} — ${t}`);
     }
     const blob = await resp.blob();
@@ -54,8 +54,8 @@
   }
 
   $('btnPdf').addEventListener('click', async () => {
-    const start = $('start').value || new Date(Date.now() - 30*864e5).toISOString().slice(0,10);
-    const end = $('end').value || new Date().toISOString().slice(0,10);
+    const start = $('start').value || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+    const end = $('end').value || new Date().toISOString().slice(0, 10);
     const companyId = Number($('companyId').value || 0);
     log('Gerando PDF…');
     try {
@@ -65,8 +65,8 @@
   });
 
   $('btnTop').addEventListener('click', async () => {
-    const start = $('start').value || new Date(Date.now() - 30*864e5).toISOString().slice(0,10);
-    const end = $('end').value || new Date().toISOString().slice(0,10);
+    const start = $('start').value || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+    const end = $('end').value || new Date().toISOString().slice(0, 10);
     const companyId = Number($('companyId').value || 0);
     log('Gerando Excel (Top 10)…');
     try {
@@ -76,8 +76,8 @@
   });
 
   $('btnAtrasos').addEventListener('click', async () => {
-    const start = $('start').value || new Date(Date.now() - 30*864e5).toISOString().slice(0,10);
-    const end = $('end').value || new Date().toISOString().slice(0,10);
+    const start = $('start').value || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+    const end = $('end').value || new Date().toISOString().slice(0, 10);
     const companyId = Number($('companyId').value || 0);
     log('Gerando Excel (Atrasos)…');
     try {
@@ -85,4 +85,89 @@
       log('Excel (Atrasos) gerado.');
     } catch (e) { console.error(e); log('Falha ao gerar Excel (Atrasos).'); }
   });
+
+  // ===== Mini-IA de comandos =====
+  function parseCmd(text) {
+    const t = (text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    // ex.: "me envie o diario de bordo do cliente totalplast"
+    const m = /diario\s+de\s+bordo.*cliente\s+(.+)/i.exec(t);
+    if (m) return { kind: 'diario', cliente: m[1].trim() };
+    return null;
+  }
+
+  $('btnCmd').addEventListener('click', async () => {
+    const cmd = parseCmd($('cmd').value);
+    if (!cmd) { alert('Não entendi. Tente: "me envie o diário de bordo do cliente X"'); return; }
+
+    if (cmd.kind === 'diario') {
+      // pede os 2 arquivos
+      log('Selecione as duas planilhas (fonte de dados e informações de transporte)…');
+
+      const p1 = new Promise((res) => { const i = $('fileFonte'); i.onchange = () => res(i.files[0]); i.click(); });
+      const p2 = new Promise((res) => { const i = $('fileInfo'); i.onchange = () => res(i.files[0]); i.click(); });
+
+      const [fonte, informacoes] = await Promise.all([p1, p2]);
+      if (!fonte || !informacoes) { alert('Envie as duas planilhas.'); return; }
+
+      if (!currentToken) { alert('Aguardando autenticação…'); return; }
+
+      const start = $('start').value || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+      const end = $('end').value || new Date().toISOString().slice(0, 10);
+      const companyId = Number($('companyId').value || 0);
+
+      const form = new FormData();
+      form.append('cliente', $('cmd').value); // manda a frase original
+      form.append('companyId', String(companyId));
+      form.append('start', start);
+      form.append('end', end);
+      form.append('fonte', fonte);
+      form.append('informacoes', informacoes);
+
+      log('Gerando Diário de Bordo (PDF)…');
+      const resp = await fetch(`${API_BASE_URL}/api/reports/diario-de-bordo`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${currentToken}` },
+        body: form
+      });
+
+      if (!resp.ok) {
+        const err = await resp.text().catch(() => '');
+        console.error(err);
+        return log('Falha ao gerar Diário. Veja o console.');
+      }
+
+      const blob = await resp.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `diario_de_bordo_${start}_a_${end}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 800);
+
+      log('Diário de Bordo gerado ✅');
+    }
+  });
+
+  // Dispara email automaticamente após gerar "Atrasos"
+  document.getElementById('btnAtrasos').addEventListener('click', async () => {
+    // depois que baixar o Excel, pede para backend enviar e-mails
+    try {
+      const start = $('start').value || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+      const end = $('end').value || new Date().toISOString().slice(0, 10);
+      const companyId = Number($('companyId').value || 0);
+      await fetch(`${API_BASE_URL}/api/reports/atrasos/send-emails`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${currentToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ start, end, companyId })
+      });
+      log('Resumo de atrasos gerado e e-mails enviados ✅');
+    } catch (e) {
+      console.error(e);
+      log('Falha ao enviar e-mails de atrasos.');
+    }
+  }, { once: false });
+
 })();

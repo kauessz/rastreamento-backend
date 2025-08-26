@@ -1,128 +1,141 @@
 // src/server.js
 require('dotenv').config();
 
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
+const express     = require('express');
+const helmet      = require('helmet');
+const morgan      = require('morgan');
+const compression = require('compression');
+const rateLimit   = require('express-rate-limit');
+const cors        = require('cors');
+const admin       = require('firebase-admin');
 
-// (opcionais – se não instalou, tudo bem)
-function tryRequire(name) { try { return require(name); } catch { return null; } }
-const helmet = tryRequire('helmet');
-const compression = tryRequire('compression');
-const morgan = tryRequire('morgan');
+// ============ Firebase Admin (token do mesmo projeto do front!) ============
+(function initFirebaseAdmin() {
+  try {
+    // Suporta tanto FIREBASE_SERVICE_ACCOUNT (JSON inteiro)
+    // quanto as variáveis separadas (PROJECT_ID, CLIENT_EMAIL, PRIVATE_KEY)
+    let cred;
 
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      const json = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      cred = admin.credential.cert(json);
+    } else {
+      const projectId  = process.env.FIREBASE_PROJECT_ID;
+      const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+      // Render/Netlify guardam \n escapado — corrigimos:
+      const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+
+      if (!projectId || !clientEmail || !privateKey) {
+        console.warn('[auth] Variáveis do Firebase incompletas.');
+      }
+      cred = admin.credential.cert({ projectId, clientEmail, privateKey });
+    }
+
+    admin.initializeApp({ credential: cred });
+    console.log('[auth] Firebase Admin inicializado.');
+  } catch (err) {
+    console.error('[auth] Falha ao iniciar Firebase Admin:', err);
+  }
+})();
+
+// ============================ App / Middleware =============================
 const app = express();
 app.set('trust proxy', 1);
 
-// -------- Middlewares básicos --------
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(helmet());
+app.use(compression());
+app.use(morgan('tiny'));
 
-// Segurança / perf (se disponíveis)
-if (helmet) app.use(helmet());
-if (compression) app.use(compression());
-if (morgan) app.use(morgan('combined'));
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-// -------- CORS (compatível com Express 5) --------
-// Use CORS_ORIGIN="https://seuapp.com,https://outroapp.com" para liberar origens específicas
-const allowedOrigins = (process.env.CORS_ORIGIN || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+// Rate-limit simples (ajuste se precisar)
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    limit: 300,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false
+  })
+);
 
-const corsOptions = {
-  credentials: false,
-  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization'],
-  origin: (origin, cb) => {
-    // Libera ferramentas sem origem (curl, healthcheck) e, se não configurar, libera geral
-    if (!origin || allowedOrigins.length === 0) return cb(null, true);
-    return allowedOrigins.includes(origin) ? cb(null, true) : cb(new Error('Not allowed by CORS'));
-  }
-};
+// =============================== CORS (fix) ================================
+// IMPORTANTE: nada de app.options('*', …) no Express 5.
+// Usamos cors() com origin dinâmico + resposta manual para OPTIONS.
+const allowedOrigins = [
+  process.env.FRONT_ORIGIN,                 // ex.: https://tracking-r.netlify.app
+  'http://localhost:5500',
+  'http://127.0.0.1:5500'
+].filter(Boolean);
 
-app.use(cors(corsOptions));
-// IMPORTANTE: não usar app.options('*', ...) no Express 5 (quebrava com path-to-regexp)
-
-// -------- Static (se você tiver pasta pública) --------
-// app.use(express.static(path.join(__dirname, 'public')));
-
-// ===== Helpers de montagem =====
-function safeRequire(p) {
-  try { return require(p); } catch (err) {
-    console.error(`Falha ao dar require em ${p}:`, err.message);
-    return null;
-  }
-}
-function mount(basePath, mod) {
-  if (!mod) return;
-  if (typeof basePath !== 'string' || !basePath.startsWith('/')) {
-    console.error(`Path inválido ao montar rotas: "${basePath}". Deve começar com "/". Ignorando.`);
-    return;
-  }
-  app.use(basePath, mod);
-  console.log(`Rotas montadas em ${basePath}`);
-}
-
-// ===== Webhook do Dialogflow (Fulfillment) =====
-// Você pode manter seu agente sem webhook (respostas estáticas).
-// Se quiser usar, aponte o Fulfillment para uma destas URLs:
-function dialogflowHandler(req, res) {
+function originOk(origin) {
+  if (!origin) return true; // chamadas server-to-server
+  if (allowedOrigins.includes(origin)) return true;
   try {
-    const body       = req.body || {};
-    const queryText  = body?.queryResult?.queryText || '';
-    const parameters = body?.queryResult?.parameters || {};
-    const session    = body?.session || '';
-
-    // Exemplo simples — troque pela sua lógica (buscar BD etc.)
-    const parts = [];
-    if (queryText)  parts.push(`Você disse: "${queryText}"`);
-    if (parameters && Object.keys(parameters).length) parts.push(`Parâmetros: ${JSON.stringify(parameters)}`);
-    if (session)    parts.push(`Sessão: ${session.split('/').pop()}`);
-    const reply = parts.length ? parts.join(' | ') : 'Tudo certo por aqui!';
-
-    return res.json({
-      fulfillmentText: reply,
-      fulfillmentMessages: [{ text: { text: [reply] } }],
-      source: 'rastreamento-backend',
-    });
-  } catch (err) {
-    console.error('Webhook DF erro:', err);
-    return res.json({ fulfillmentText: 'Desculpe, houve um erro ao processar sua solicitação.' });
-  }
+    const { hostname } = new URL(origin);
+    // libera “*.netlify.app” e “*.onrender.com” por comodidade
+    if (hostname.endsWith('.netlify.app')) return true;
+    if (hostname.endsWith('.onrender.com')) return true;
+  } catch {}
+  return false;
 }
 
-// -------- Rotas da API --------
-const userRoutes = require('./api/userRoutes');
-const operationRoutes = require('./api/operationRoutes');
-const dashboardRoutes = require('./api/dashboardRoutes');
-const clientRoutes = require('./api/clientRoutes');
-const reportsRoutes = require('./api/reportsRoutes');
-const embarcadorRoutes = require('./api/embarcadorRoutes');
+app.use(
+  cors({
+    origin: (origin, cb) => cb(null, originOk(origin)),
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+  })
+);
 
-app.use('/api/users', userRoutes);
-app.use('/api/operations', operationRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/clients', clientRoutes);
-app.use('/api/reports', reportsRoutes);
+// Resposta curta às preflights sem usar app.options('*', …)
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// ================================ Rotas ====================================
+// Middlewares e rotas do projeto
+const userRoutes        = require('./api/userRoutes');
+const operationRoutes   = require('./api/operationRoutes');
+const embarcadorRoutes  = require('./api/embarcadorRoutes');
+const clientRoutes      = require('./api/clientRoutes');
+const dashboardRoutes   = require('./api/dashboardRoutes');
+const reportsRoutes     = require('./api/reportsRoutes');
+
+// Montagem
+app.use('/api/users',        userRoutes);
+app.use('/api/operations',   operationRoutes);
 app.use('/api/embarcadores', embarcadorRoutes);
+app.use('/api/client',       clientRoutes);
+app.use('/api/dashboard',    dashboardRoutes);
+app.use('/api/reports',      reportsRoutes);
 
-// -------- Health & raiz --------
+// ====================== Webhook Dialogflow (Messenger) =====================
+// Se você usa o Dialogflow Messenger (iframe) no front, esse webhook
+// recebe intents e devolve respostas simples (ajuste à sua lógica).
+app.post('/api/dialogflow/webhook', async (req, res) => {
+  try {
+    const query = req.body?.queryResult?.queryText || '';
+    // Exemplo mínimo — aqui você pode chamar seu banco, etc.
+    const fulfillmentText = query
+      ? `Entendi sua pergunta: "${query}". Vou buscar os dados e te retorno!`
+      : 'Oi! Como posso ajudar no rastreamento?';
+
+    return res.json({ fulfillmentText });
+  } catch (e) {
+    console.error('[df-webhook] erro:', e);
+    return res.json({ fulfillmentText: 'Tive um problema ao processar a requisição.' });
+  }
+});
+
+// ================================ Health ===================================
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
-app.get('/', (_req, res) => res.send('API de Rastreamento ativa 🚚'));
+app.get('/', (_req, res) => res.send('API de Rastreamento ativa ✅'));
 
-// -------- 404 apenas para /api --------
-app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
-
-// -------- Error handler --------
-app.use((err, _req, res, _next) => {
-  console.error('Unhandled error:', err);
-  res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
-});
-
-// -------- Start --------
+// ================================ Start ====================================
 const PORT = process.env.PORT || 10000;
-// No Render, escutar em 0.0.0.0 é seguro
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`API up on :${PORT}`);
-});
+app.listen(PORT, () => console.log(`API up on :${PORT}`));
+
+module.exports = app;

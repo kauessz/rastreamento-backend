@@ -2,64 +2,50 @@
 require('dotenv').config();
 
 const express = require('express');
-const cors    = require('cors');
-const path    = require('path');
+const cors = require('cors');
+const path = require('path');
 
-// ===== tenta carregar libs opcionais (não quebram se faltarem) =====
+// (opcionais – se não instalou, tudo bem)
 function tryRequire(name) { try { return require(name); } catch { return null; } }
-const helmet      = tryRequire('helmet');
+const helmet = tryRequire('helmet');
 const compression = tryRequire('compression');
-const morgan      = tryRequire('morgan');
+const morgan = tryRequire('morgan');
 
-// ===== App =====
 const app = express();
 app.set('trust proxy', 1);
 
-// ===== CORS seguro (NÃO usar URL como path) =====
-const allowedOrigins = [
-  process.env.FRONT_ORIGIN,             // ex.: https://tracking-r.netlify.app
-  'https://tracking-r.netlify.app',
-  'http://localhost:5500',
-  'http://127.0.0.1:5500',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-].filter(Boolean);
+// -------- Middlewares básicos --------
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Segurança / perf (se disponíveis)
+if (helmet) app.use(helmet());
+if (compression) app.use(compression());
+if (morgan) app.use(morgan('combined'));
+
+// -------- CORS (compatível com Express 5) --------
+// Use CORS_ORIGIN="https://seuapp.com,https://outroapp.com" para liberar origens específicas
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
 const corsOptions = {
-  origin(origin, cb) {
-    if (!origin) return cb(null, true);                       // health checks / curl
-    if (allowedOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error(`CORS: origem não permitida -> ${origin}`), false);
-  },
-  credentials: true,
+  credentials: false,
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization'],
+  origin: (origin, cb) => {
+    // Libera ferramentas sem origem (curl, healthcheck) e, se não configurar, libera geral
+    if (!origin || allowedOrigins.length === 0) return cb(null, true);
+    return allowedOrigins.includes(origin) ? cb(null, true) : cb(new Error('Not allowed by CORS'));
+  }
 };
 
 app.use(cors(corsOptions));
-app.options('/(.*)', cors(corsOptions)); // casa qualquer caminho
+// IMPORTANTE: não usar app.options('*', ...) no Express 5 (quebrava com path-to-regexp)
 
-// ===== Segurança / Perf (opcionais) =====
-if (helmet) {
-  app.use(helmet({ crossOriginResourcePolicy: false }));
-}
-if (compression) app.use(compression());
-if (morgan) app.use(morgan('dev'));
-
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-// ===== Firebase Admin (opcional) =====
-try {
-  const admin = require('firebase-admin');
-  if (!admin.apps.length) {
-    // se GOOGLE_APPLICATION_CREDENTIALS estiver setada, ele usa automaticamente
-    admin.initializeApp();
-    console.log('Firebase Admin SDK inicializado com sucesso.');
-  }
-} catch (e) {
-  console.warn('Firebase Admin não carregado (opcional):', e.message);
-}
+// -------- Static (se você tiver pasta pública) --------
+// app.use(express.static(path.join(__dirname, 'public')));
 
 // ===== Helpers de montagem =====
 function safeRequire(p) {
@@ -77,21 +63,6 @@ function mount(basePath, mod) {
   app.use(basePath, mod);
   console.log(`Rotas montadas em ${basePath}`);
 }
-
-// ===== Rotas da API (sempre com "/api/...") =====
-const userRoutes        = safeRequire('./api/userRoutes');
-const operationRoutes   = safeRequire('./api/operationRoutes');
-const embarcadorRoutes  = safeRequire('./api/embarcadorRoutes');
-const dashboardRoutes   = safeRequire('./api/dashboardRoutes');
-const clientRoutes      = safeRequire('./api/clientRoutes');
-const reportsRoutes     = safeRequire('./api/reportsRoutes');
-
-mount('/api/users',        userRoutes);
-mount('/api/operations',   operationRoutes);
-mount('/api/embarcadores', embarcadorRoutes);
-mount('/api/dashboard',    dashboardRoutes);
-mount('/api/client',       clientRoutes);
-mount('/api/reports',      reportsRoutes);
 
 // ===== Webhook do Dialogflow (Fulfillment) =====
 // Você pode manter seu agente sem webhook (respostas estáticas).
@@ -121,24 +92,37 @@ function dialogflowHandler(req, res) {
   }
 }
 
-// Disponibiliza em três caminhos para compatibilidade com o que você já usou:
-app.post('/api/hooks/dialogflow', dialogflowHandler);
-app.post('/api/webhook/dialogflow', dialogflowHandler);
-app.post('/webhook/dialogflow', dialogflowHandler);
+// -------- Rotas da API --------
+const userRoutes = require('./api/userRoutes');
+const operationRoutes = require('./api/operationRoutes');
+const dashboardRoutes = require('./api/dashboardRoutes');
+const clientRoutes = require('./api/clientRoutes');
+const reportsRoutes = require('./api/reportsRoutes');
+const embarcadorRoutes = require('./api/embarcadorRoutes');
 
-// ===== Health e raiz =====
+app.use('/api/users', userRoutes);
+app.use('/api/operations', operationRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/clients', clientRoutes);
+app.use('/api/reports', reportsRoutes);
+app.use('/api/embarcadores', embarcadorRoutes);
+
+// -------- Health & raiz --------
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa 🚚'));
 
-// ===== 404 (apenas para /api) =====
+// -------- 404 apenas para /api --------
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
-// ===== Error handler =====
+// -------- Error handler --------
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
 });
 
-// ===== Start =====
+// -------- Start --------
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`API up on :${PORT}`));
+// No Render, escutar em 0.0.0.0 é seguro
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`API up on :${PORT}`);
+});

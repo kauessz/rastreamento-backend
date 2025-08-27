@@ -122,6 +122,27 @@ router.post('/atrasos/send-emails', authMiddleware, isAdmin, async (req, res) =>
   }
 });
 
+// ===== Tema claro/escuro =====
+(function () {
+  const root = document.documentElement;
+  const saved = localStorage.getItem('theme');
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const initial = saved || (prefersDark ? 'dark' : 'light');
+  setTheme(initial);
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.addEventListener('click', () => {
+    const next = root.classList.contains('dark') ? 'light' : 'dark';
+    setTheme(next);
+  });
+
+  function setTheme(mode) {
+    root.classList.toggle('dark', mode === 'dark');
+    root.dataset.theme = mode;              // caso seu CSS use [data-theme="dark"]
+    localStorage.setItem('theme', mode);
+  }
+})();
+
+
 
 // Admin-only
 router.get('/daily', authMiddleware, isAdmin, reports.getDailyReport);

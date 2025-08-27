@@ -3,7 +3,8 @@
   window.API_BASE_URL = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
   const API = window.API_BASE_URL;
   const PAGE_SIZE = 10;   // tabela principal
-  const BULK_SIZE = 1000; // para a “tela” com o filtro (modal)
+  const BULK_SIZE = 1000; // carregamento em massa (fallback KPIs / modal)
+  let CHARTS = { ofensores: null, clientes: null };
 
   // ========= Tema =========
   const themeToggle = document.getElementById('checkbox');
@@ -16,62 +17,75 @@
   themeToggle?.addEventListener('change', () => {
     body.classList.toggle('dark-mode');
     localStorage.setItem('theme', body.classList.contains('dark-mode') ? 'dark-mode' : 'light-mode');
+    // ajusta gráficos ao tema
+    refreshChartsTheme();
   });
 
   // ========= Elementos =========
   const userEmailEl      = document.getElementById('userEmail');
+  const navReportsBtn    = document.getElementById('navReports');
 
   const kpiTotalValue    = document.querySelector('#kpi-total .kpi-value');
   const kpiOntimeValue   = document.querySelector('#kpi-ontime .kpi-value');
   const kpiLateValue     = document.querySelector('#kpi-atrasadas .kpi-value');
   const kpiPctValue      = document.querySelector('#kpi-percentual .kpi-value');
 
+  const embarcadorFilter = document.getElementById('embarcadorFilter');
   const bookingFilter    = document.getElementById('bookingFilter');
   const dataPrevFilter   = document.getElementById('dataPrevisaoFilter');
   const filterBtn        = document.getElementById('filterButton');
   const clearBtn         = document.getElementById('clearFilterButton');
 
-  const tableBodyEl = document.querySelector('#clientOperationsTable tbody')
-                    || document.querySelector('#operationsTable tbody')
-                    || document.querySelector('table tbody');
-  const paginationEl = document.getElementById('paginationControls')
-                    || document.getElementById('pagination');
+  const tableBodyEl = document.querySelector('#operationsTable tbody') ||
+                      document.querySelector('table tbody');
+  const paginationEl = document.getElementById('paginationControls');
 
-  // barra de relatórios (admin)
-  const repStart = document.getElementById('repStart') || document.getElementById('start');
-  const repEnd   = document.getElementById('repEnd')   || document.getElementById('end');
+  const repStart = document.getElementById('repStart');
+  const repEnd   = document.getElementById('repEnd');
   const btnTop   = document.getElementById('btnExcelTop');
   const btnAtr   = document.getElementById('btnExcelAtrasos');
+
+  // Gerenciador de Apelidos
+  const aliasesTableBody = document.querySelector('#aliasesTable tbody');
 
   // ========= Estado =========
   let currentUser  = null;
   let currentToken = null;
   let currentPage  = 1;
-  let currentFilters = { booking: '', data_previsao: '' };
+  let currentFilters = { booking: '', data_previsao: '', embarcador: '' };
+  let currentAllOps  = [];  // cache para gráficos/KPI fallback
+  let aliasMap = {};        // { "ambev s.a.": "AMBEV", "ambev": "AMBEV" }
 
   // ========= Utils =========
-  const fmt   = (iso) => { try { return iso ? new Date(iso).toLocaleString('pt-BR') : 'N/A'; } catch { return 'N/A'; } };
-  const safe  = (v) => (v==null || v==='') ? 'N/A' : String(v);
-  const qs    = (o) => { const p=new URLSearchParams(); for (const [k,v] of Object.entries(o)) if(v!=null&&v!=='') p.append(k,v); return p.toString(); };
+  const fmt = (iso) => { try { return iso ? new Date(iso).toLocaleString('pt-BR') : 'N/A'; } catch { return 'N/A'; } };
+  const safe = (v) => (v==null || v==='') ? 'N/A' : String(v);
+  const qs = (o) => { const p=new URLSearchParams(); for (const [k,v] of Object.entries(o)) if(v!=null&&v!=='') p.append(k,v); return p.toString(); };
   const todayISO = () => (new Date()).toISOString().slice(0,10);
   const defaultPeriod = () => { const end=todayISO(); const s=new Date(Date.now()-30*864e5).toISOString().slice(0,10); return {start:s,end}; };
+
+  const norm = (s) => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+  const firstOf = (obj, keys, fallback='N/A') => {
+    for (const k of keys) if (obj && obj[k]!=null && obj[k]!=='') return obj[k];
+    return fallback;
+  };
 
   async function apiGet(path, withAuth=true){
     const headers={'Content-Type':'application/json'};
     if(withAuth && currentToken) headers.Authorization = `Bearer ${currentToken}`;
     const r = await fetch(`${API}${path}`, {headers});
-    if(!r.ok) throw new Error(await r.text()||`HTTP ${r.status}`);
+    if(!r.ok) throw new Error(await r.text().catch(()=>`HTTP ${r.status}`));
     return r.json();
   }
-
-  async function downloadAuth(path, params, filename) {
-    if (!currentToken) throw new Error('Sem token');
-    const q = new URLSearchParams(params || {}).toString();
-    const resp = await fetch(`${API}${path}?${q}`, {
-      headers: { Authorization: `Bearer ${currentToken}` }
+  async function apiFetchBlob(path, params) {
+    const q = params ? `?${new URLSearchParams(params).toString()}` : '';
+    const resp = await fetch(`${API}${path}${q}`, {
+      headers: currentToken ? { Authorization: `Bearer ${currentToken}` } : {}
     });
-    if (!resp.ok) throw new Error(await resp.text().catch(()=>`HTTP ${resp.status}`));
-    const blob = await resp.blob();
+    if(!resp.ok) throw new Error(await resp.text().catch(()=>`HTTP ${resp.status}`));
+    return resp.blob();
+  }
+  async function downloadAuth(path, params, filename) {
+    const blob = await apiFetchBlob(path, params);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = filename || 'download';
@@ -80,9 +94,9 @@
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 800);
   }
 
-  function getAdminPeriod() {
+  function periodFromUI() {
     const s = repStart?.value, e = repEnd?.value;
-    if (!s || !e) return defaultPeriod();
+    if (!s || !e) { const d=defaultPeriod(); return d; }
     return { start: s, end: e };
   }
 
@@ -100,44 +114,76 @@
       return;
     }
 
-    // datas padrão na barra de relatórios
+    // datas padrão
     const def = defaultPeriod();
     repStart && (repStart.value = def.start);
     repEnd   && (repEnd.value   = def.end);
 
+    // navegação p/ relatórios
+    navReportsBtn?.addEventListener('click', () => window.location.href = 'admin-reports.html');
+
     bindAdminReportButtons();
     bindKpiClicks();
+    bindFilters();
+    bindTableExpand();
 
-    await fetchKpis();           // agora: /api/dashboard/kpis
-    await fetchOps(1, currentFilters); // agora: /api/operations
+    await loadAliases();
+    await fetchKpisWithFallback();
+    await fetchOps(1, currentFilters);
+
+    // carrega embarcadores no filtro a partir do dataset
+    populateEmbarcadorFilter(currentAllOps);
+    // gráficos iniciais
+    updateChartsFromOps(currentAllOps);
   });
 
-  // ========= KPIs (ADMIN) =========
-  async function fetchKpis(){
+  // ========= KPIs (API + Fallback) =========
+  async function fetchKpisWithFallback(){
     try {
-      const d = await apiGet('/api/dashboard/kpis'); // <<<<<<<<<<<<<<<<<<
-      kpiTotalValue  && (kpiTotalValue.textContent  = safe(d.total_operacoes));
-      kpiOntimeValue && (kpiOntimeValue.textContent = safe(d.operacoes_on_time));
-      kpiLateValue   && (kpiLateValue.textContent   = safe(d.operacoes_atrasadas));
-      kpiPctValue    && (kpiPctValue.textContent    = (d.percentual_atraso!=null?`${d.percentual_atraso}%`:'0%'));
-    } catch(e){ console.error('KPIs:', e); }
+      const d = await apiGet('/api/dashboard/kpis');
+      setKpis(d.total_operacoes, d.operacoes_on_time, d.operacoes_atrasadas);
+    } catch (e) {
+      // Fallback: computa a partir de todas as operações
+      currentAllOps = await fetchAllOps({});
+      const { total, onTime, late } = aggregateKpis(currentAllOps);
+      setKpis(total, onTime, late);
+    }
+  }
+  function setKpis(total, onTime, late){
+    const pct = total ? Math.round((late/total)*10000)/100 : 0;
+    kpiTotalValue  && (kpiTotalValue.textContent  = String(total));
+    kpiOntimeValue && (kpiOntimeValue.textContent = String(onTime));
+    kpiLateValue   && (kpiLateValue.textContent   = String(late));
+    kpiPctValue    && (kpiPctValue.textContent    = `${pct}%`);
+  }
+  function isLateStatus(s){ return /atras/.test((s||'').toLowerCase()); }
+  function isOnTimeStatus(s){ return /(on ?time|no prazo|pontual|sem atraso)/.test((s||'').toLowerCase()); }
+  function aggregateKpis(items){
+    let total=0, onTime=0, late=0;
+    for(const op of items){
+      total++;
+      const status = firstOf(op, ['status_operacao','status'], '');
+      if (isLateStatus(status)) late++; else if (isOnTimeStatus(status)) onTime++;
+    }
+    return { total, onTime, late };
   }
 
-  // ========= Tabela principal =========
+  // ========= Operações =========
   async function fetchOps(page=1, filters={}){
     currentPage = page;
     currentFilters = {
       booking: (filters.booking||'').trim(),
-      data_previsao: (filters.data_previsao||'').trim()
+      data_previsao: (filters.data_previsao||'').trim(),
+      embarcador: (filters.embarcador||'').trim()
     };
     const q = qs({ page, pageSize: PAGE_SIZE, ...currentFilters });
-
     try{
-      // ADMIN: usa /api/operations (protegido por isAdmin)
-      const payload = await apiGet(`/api/operations?${q}`); // <<<<<<<<<<<
+      const payload = await apiGet(`/api/operations?${q}`);
       const list   = payload.items || payload.rows || payload.data || [];
-      const total  = (payload.total ?? payload.count ?? payload.totalCount ?? 0);
+      // aplica apelidos no embarcador
+      list.forEach(applyAliasToOp);
       renderTable(list);
+      const total  = (payload.total ?? payload.count ?? payload.totalCount ?? 0);
       renderPagination(total, page, PAGE_SIZE);
     }catch(e){
       console.error('Ops:', e);
@@ -145,26 +191,97 @@
     }
   }
 
+  async function fetchAllOps(filters={}){
+    const list = [];
+    let page = 1;
+    for(;;){
+      const q = qs({ page, pageSize: BULK_SIZE, ...filters });
+      try{
+        const payload = await apiGet(`/api/operations?${q}`);
+        const chunk = payload.items || payload.rows || payload.data || [];
+        chunk.forEach(applyAliasToOp);
+        list.push(...chunk);
+        if (chunk.length < BULK_SIZE) break;
+        page++;
+      }catch{ break; }
+    }
+    currentAllOps = list;
+    return list;
+  }
+
+  function applyAliasToOp(op){
+    const raw = firstOf(op, ['nome_embarcador','embarcador'], 'N/A');
+    const n = norm(raw);
+    if (aliasMap[n]) op.nome_embarcador = aliasMap[n];
+  }
+
+  // ========= Render Tabela + Detalhe =========
   function renderTable(items){
     if(!tableBodyEl) return;
     tableBodyEl.innerHTML='';
     if(!items.length){
       const tr=document.createElement('tr'); const td=document.createElement('td');
-      td.colSpan=8; td.textContent='Nenhuma operação encontrada.'; tr.appendChild(td); tableBodyEl.appendChild(tr); return;
+      td.colSpan=9; td.textContent='Nenhuma operação encontrada.'; tr.appendChild(td); tableBodyEl.appendChild(tr); return;
     }
-    items.forEach(op=>{
-      const tr=document.createElement('tr'); tr.className='operation-row';
-      [
-        safe(op.booking),
-        safe(op.containers),
-        safe(op.nome_embarcador || op.embarcador || 'N/A'),
-        safe(op.porto || op.porto_origem || 'N/A'),
-        fmt(op.previsao_inicio_atendimento),
-        fmt(op.dt_inicio_execucao),
-        fmt(op.dt_fim_execucao),
-        safe(op.status_operacao || op.status || 'N/A')
-      ].forEach(t=>{const td=document.createElement('td'); td.textContent=t; tr.appendChild(td);});
+    for(const op of items){
+      // campos com mapeamento tolerante
+      const booking   = firstOf(op, ['booking'], 'N/A');
+      const containers= firstOf(op, ['containers','container','conteiner'], 'N/A');
+      const embarc    = firstOf(op, ['nome_embarcador','embarcador'], 'N/A');
+      const porto     = firstOf(op, ['porto','porto_origem'], 'N/A');
+      const prev      = firstOf(op, ['previsao_inicio_atendimento'], null);
+      const iniExec   = firstOf(op, ['dt_inicio_execucao'], null);
+      const fimExec   = firstOf(op, ['dt_fim_execucao'], null);
+      const atraso    = firstOf(op, ['atraso_hhmm','atraso','tempo_atraso','tempo_atraso_hhmm'], 'N/A');
+      const motivo    = firstOf(op, ['motivo_atraso','motivo_do_atraso','motivo'], 'N/A');
+      const status    = firstOf(op, ['status_operacao','status'], 'N/A');
+
+      // linha principal
+      const tr = document.createElement('tr');
+      tr.className = 'main-row';
+      tr.innerHTML = `
+        <td>${safe(booking)}</td>
+        <td>${safe(containers)}</td>
+        <td>${safe(embarc)}</td>
+        <td>${safe(porto)}</td>
+        <td>${fmt(prev)}</td>
+        <td>${fmt(iniExec)}</td>
+        <td>${fmt(fimExec)}</td>
+        <td>${safe(atraso)}</td>
+        <td>${safe(motivo)}</td>
+      `;
       tableBodyEl.appendChild(tr);
+
+      // linha de detalhes (expansível)
+      const det = document.createElement('tr');
+      det.className = 'details-row';
+      det.innerHTML = `
+        <td colspan="9" class="details-content">
+          <div class="details-wrapper">
+            <span><strong>Status:</strong> ${safe(status)}</span>
+            <span><strong>Booking:</strong> ${safe(booking)}</span>
+            <span><strong>Contêiner:</strong> ${safe(containers)}</span>
+            <span><strong>Embarcador:</strong> ${safe(embarc)}</span>
+            <span><strong>Porto:</strong> ${safe(porto)}</span>
+            <span><strong>Previsão de Atendimento:</strong> ${fmt(prev)}</span>
+            <span><strong>Início Execução:</strong> ${fmt(iniExec)}</span>
+            <span><strong>Fim Execução:</strong> ${fmt(fimExec)}</span>
+            <span><strong>Atraso:</strong> ${safe(atraso)}</span>
+            <span><strong>Motivo do Atraso:</strong> ${safe(motivo)}</span>
+          </div>
+        </td>`;
+      tableBodyEl.appendChild(det);
+    }
+  }
+
+  function bindTableExpand(){
+    tableBodyEl?.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr.main-row');
+      if (!tr) return;
+      const next = tr.nextElementSibling;
+      if (next && next.classList.contains('details-row')) {
+        next.classList.toggle('visible'); // CSS já tem .details-row/.visible
+      }
     });
   }
 
@@ -184,130 +301,149 @@
     fetchOps(Number(b.dataset.goto||'1'), currentFilters);
   });
 
-  // Filtros simples
-  filterBtn?.addEventListener('click', ()=>{
-    fetchOps(1, { booking: bookingFilter?.value||'', data_previsao: dataPrevFilter?.value||'' });
-  });
-  clearBtn?.addEventListener('click', ()=>{
-    if(bookingFilter) bookingFilter.value='';
-    if(dataPrevFilter) dataPrevFilter.value='';
-    fetchOps(1, { booking:'', data_previsao:'' });
-  });
-
-  // ========= Relatórios (admin) — com Authorization =========
-  function getPeriod() {
-    const s = repStart?.value || defaultPeriod().start;
-    const e = repEnd?.value   || defaultPeriod().end;
-    return { start: s, end: e };
+  // ========= Filtros =========
+  function bindFilters(){
+    filterBtn?.addEventListener('click', ()=>{
+      fetchOps(1, {
+        booking: bookingFilter?.value||'',
+        data_previsao: dataPrevFilter?.value||'',
+        embarcador: embarcadorFilter?.value||''
+      });
+    });
+    clearBtn?.addEventListener('click', ()=>{
+      if(bookingFilter) bookingFilter.value='';
+      if(dataPrevFilter) dataPrevFilter.value='';
+      if(embarcadorFilter) embarcadorFilter.value='';
+      fetchOps(1, { booking:'', data_previsao:'', embarcador:'' });
+    });
+  }
+  function populateEmbarcadorFilter(items){
+    if (!embarcadorFilter) return;
+    const set = new Set(items.map(op => firstOf(op,['nome_embarcador','embarcador'],'N/A')));
+    embarcadorFilter.innerHTML = `<option value="">Todos Embarcadores</option>` + 
+      [...set].filter(Boolean).sort().map(n=>`<option value="${n}">${n}</option>`).join('');
   }
 
+  // ========= Relatórios (admin) =========
   function bindAdminReportButtons(){
     if (btnTop) btnTop.addEventListener('click', async ()=>{
       try {
-        const {start,end}=getPeriod();
+        const {start,end}=periodFromUI();
         await downloadAuth('/api/reports/top-ofensores.xlsx', {start,end,companyId:0},
           `top_ofensores_${start}_a_${end}.xlsx`);
       } catch (e) { console.error(e); alert('Falha ao gerar Excel de Top 10 Ofensores.'); }
     });
     if (btnAtr) btnAtr.addEventListener('click', async ()=>{
       try {
-        const {start,end}=getPeriod();
+        const {start,end}=periodFromUI();
         await downloadAuth('/api/reports/atrasos.xlsx', {start,end,companyId:0},
           `resumo_atrasos_${start}_a_${end}.xlsx`);
       } catch (e) { console.error(e); alert('Falha ao gerar Excel de Atrasos.'); }
     });
   }
 
-  // ========= KPIs clicáveis ⇒ “tela” (modal) =========
-  function bindKpiClicks(){
-    const totalCard = document.getElementById('kpi-total');
-    const onCard    = document.getElementById('kpi-ontime');
-    const lateCard  = document.getElementById('kpi-atrasadas');
-    [ [totalCard,'total'], [onCard,'on_time'], [lateCard,'atrasadas'] ].forEach(([el,mode])=>{
-      if(!el) return; el.style.cursor='pointer'; el.addEventListener('click',()=>openFilteredModal(mode));
-    });
+  // ========= Gráficos =========
+  function refreshChartsTheme(){
+    // apenas força redraw para cores do tema (texto/eixos)
+    if (CHARTS.ofensores) CHARTS.ofensores.update();
+    if (CHARTS.clientes) CHARTS.clientes.update();
   }
-
-  async function fetchAllOps(filters={}){
-    const list = [];
-    let page = 1;
-    for(;;){
-      const q = qs({ page, pageSize: BULK_SIZE, ...filters });
-      try{
-        const payload = await apiGet(`/api/operations?${q}`);
-        const chunk = payload.items || payload.rows || payload.data || [];
-        list.push(...chunk);
-        if (chunk.length < BULK_SIZE) break;
-        page++;
-      }catch{ break; }
+  function updateChartsFromOps(items){
+    // Top motivos de atraso
+    const motivoKey = (op) => firstOf(op, ['motivo_atraso','motivo_do_atraso','motivo'], 'Sem motivo');
+    const mapMotivo = new Map();
+    for (const op of items) {
+      const s = firstOf(op,['status_operacao','status'],'');
+      if (!isLateStatus(s)) continue;
+      const m = motivoKey(op);
+      mapMotivo.set(m, (mapMotivo.get(m)||0)+1);
     }
-    return list;
+    const motivos = [...mapMotivo.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
+    drawBar('ofensoresChart', 'Top 10 Ofensores', motivos.map(x=>x[0]), motivos.map(x=>x[1]), 'ofensores');
+
+    // Top clientes com atraso
+    const mapCli = new Map();
+    for (const op of items) {
+      const s = firstOf(op,['status_operacao','status'],'');
+      if (!isLateStatus(s)) continue;
+      const c = firstOf(op, ['nome_embarcador','embarcador'],'Sem cliente');
+      mapCli.set(c, (mapCli.get(c)||0)+1);
+    }
+    const clientes = [...mapCli.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
+    drawBar('clientesChart', 'Top 10 Clientes', clientes.map(x=>x[0]), clientes.map(x=>x[1]), 'clientes');
   }
-
-  function filterByMode(items, mode){
-    if (mode === 'total') return items;
-    const isLate = s => /atras/.test((s||'').toLowerCase());
-    const isOn   = s => /(on ?time|no prazo|pontual|sem atraso)/.test((s||'').toLowerCase());
-    return items.filter(op => {
-      const s = op.status_operacao || op.status || '';
-      if (mode === 'atrasadas') return isLate(s);
-      if (mode === 'on_time')   return isOn(s);
-      return true;
-    });
-  }
-
-  function openFilteredModal(mode){
-    const titles = { total: 'Todas as operações', on_time: 'Operações On Time', atrasadas: 'Operações Atrasadas' };
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9998;';
-    const modal = document.createElement('div');
-    modal.style.cssText = 'position:fixed;inset:5%;background:#fff;color:#111;border-radius:14px;padding:16px;z-index:9999;overflow:auto;';
-    if (document.body.classList.contains('dark-mode')) { modal.style.background='#0b1220'; modal.style.color='#e5e7eb'; }
-    modal.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h3 style="margin:0">${titles[mode]||'Operações'}</h3>
-        <button id="closeModal" class="btn">Fechar</button>
-      </div>
-      <div id="modalContent">Carregando…</div>`;
-    document.body.appendChild(overlay);
-    document.body.appendChild(modal);
-    document.getElementById('closeModal').onclick = ()=>{ modal.remove(); overlay.remove(); };
-
-    (async()=>{
-      try{
-        const all = await fetchAllOps(currentFilters);
-        const sub = filterByMode(all, mode);
-        const html = renderMiniTable(sub);
-        document.getElementById('modalContent').innerHTML = html;
-      }catch(e){
-        document.getElementById('modalContent').textContent = 'Falha ao carregar operações.';
+  function drawBar(canvasId, label, labels, data, which){
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+    const cfg = {
+      type: 'bar',
+      data: { labels, datasets: [{ label, data }] },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: body.classList.contains('dark-mode') ? '#e5e7eb' : '#111827' }},
+          y: { ticks: { color: body.classList.contains('dark-mode') ? '#e5e7eb' : '#111827' }}
+        }
       }
-    })();
+    };
+    if (which==='ofensores') { if (CHARTS.ofensores) CHARTS.ofensores.destroy(); CHARTS.ofensores = new Chart(ctx, cfg); }
+    else { if (CHARTS.clientes) CHARTS.clientes.destroy(); CHARTS.clientes = new Chart(ctx, cfg); }
   }
 
-  function renderMiniTable(items){
-    if (!items.length) return '<p>Nenhuma operação.</p>';
-    const rows = items.slice(0,1000).map(op=>`
-      <tr>
-        <td>${safe(op.booking)}</td>
-        <td>${safe(op.containers)}</td>
-        <td>${safe(op.nome_embarcador || op.embarcador || 'N/A')}</td>
-        <td>${fmt(op.previsao_inicio_atendimento)}</td>
-        <td>${fmt(op.dt_inicio_execucao)}</td>
-        <td>${fmt(op.dt_fim_execucao)}</td>
-        <td>${safe(op.status_operacao || op.status || 'N/A')}</td>
-      </tr>`).join('');
-    return `
-      <div class="table-wrapper">
-        <table class="operations-table">
-          <thead><tr>
-            <th>Booking</th><th>Contêiner</th><th>Embarcador</th>
-            <th>Prev. Atendimento</th><th>Início Execução</th><th>Fim Execução</th><th>Status</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-        <p style="margin-top:8px" class="muted">Exibindo até 1000 registros.</p>
-      </div>`;
+  // ========= Gerenciador de Apelidos =========
+  async function loadAliases(){
+    // tenta do backend
+    try{
+      const list = await apiGet('/api/aliases');
+      aliasMap = {};
+      for (const a of list) aliasMap[norm(a.alias)] = a.master;
+    }catch{
+      // fallback localStorage
+      try { aliasMap = JSON.parse(localStorage.getItem('aliasMap')||'{}'); } catch { aliasMap = {}; }
+    }
+    renderAliasesTable();
+  }
+  async function saveAlias(alias, master){
+    const payload = { alias, master };
+    try{
+      await fetch(`${API}/api/aliases`, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', ...(currentToken?{Authorization:`Bearer ${currentToken}`}:{}) },
+        body: JSON.stringify(payload)
+      });
+    }catch{
+      // fallback local
+      aliasMap[norm(alias)] = master;
+      localStorage.setItem('aliasMap', JSON.stringify(aliasMap));
+    }
+    await fetchOps(currentPage, currentFilters); // re-render com alias aplicado
+    renderAliasesTable();
+  }
+  function renderAliasesTable(){
+    if (!aliasesTableBody) return;
+    aliasesTableBody.innerHTML = '';
+    const rows = Object.entries(aliasMap);
+    if (!rows.length){
+      aliasesTableBody.innerHTML = `<tr><td colspan="4">Nenhum apelido cadastrado.</td></tr>`;
+      return;
+    }
+    for (const [aliasNorm, master] of rows){
+      const alias = aliasNorm; // já normalizado
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${alias}</td>
+        <td>${master}</td>
+        <td><input type="text" class="newMaster" placeholder="Novo mestre (ex.: AMBEV)" /></td>
+        <td><button class="button-reassign">Reassociar</button></td>`;
+      const btn = tr.querySelector('.button-reassign');
+      btn.addEventListener('click', () => {
+        const newMaster = tr.querySelector('.newMaster').value.trim();
+        if (!newMaster) return alert('Informe o novo mestre.');
+        saveAlias(alias, newMaster);
+      });
+      aliasesTableBody.appendChild(tr);
+    }
   }
 
   // Assistente (atalho) – se mantiver o Dialogflow no admin

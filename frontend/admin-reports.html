@@ -1,119 +1,95 @@
 <!doctype html>
 <html lang="pt-BR">
-
 <head>
   <meta charset="utf-8" />
   <title>Relatórios (Admin)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
   <style>
+    /* ====== Tema por variáveis ====== */
     :root {
+      --bg: #f7f8fb;
+      --bg-card: #ffffff;
+      --bg-header: #ffffff;
+      --border: #e5e7eb;
+      --text: #0f172a;
+      --muted: #64748b;
+      --btn: #2b5cff;
+      --btn-text: #ffffff;
+      --btn-ghost: transparent;
+      --btn-ghost-border: #2b5cff;
+      color-scheme: light;
+    }
+    :root.dark {
+      --bg: #0f1115;
+      --bg-card: #121522;
+      --bg-header: #0f1115;
+      --border: #1d2230;
+      --text: #e6e6e6;
+      --muted: #9aa6bf;
+      --btn: #2b5cff;
+      --btn-text: #ffffff;
+      --btn-ghost: transparent;
+      --btn-ghost-border: #2b5cff;
       color-scheme: dark;
     }
 
+    /* ====== Layout ====== */
+    html, body { height: 100%; }
     body {
       font-family: Inter, system-ui, Arial, sans-serif;
       margin: 0;
-      background: #0f1115;
-      color: #e6e6e6;
+      background: var(--bg);
+      color: var(--text);
     }
-
     header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 16px 20px;
-      border-bottom: 1px solid #1d2230;
-      position: sticky;
-      top: 0;
-      background: #0f1115;
+      display:flex; align-items:center; gap:12px;
+      padding: 12px 16px; border-bottom:1px solid var(--border);
+      position: sticky; top: 0; background: var(--bg-header); z-index: 10;
     }
-
-    .brand {
-      font-weight: 600;
-      letter-spacing: .2px;
-    }
-
-    .wrap {
-      max-width: 1100px;
-      margin: 24px auto;
-      padding: 0 16px;
-    }
-
+    .brand { font-weight: 600; letter-spacing: .2px; }
+    .spacer { flex: 1; }
+    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
     .card {
-      background: #121522;
-      border: 1px solid #1d2230;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
       border-radius: 16px;
       padding: 16px;
-      box-shadow: 0 10px 24px rgba(0, 0, 0, .25);
+      box-shadow: 0 10px 24px rgba(0,0,0,.05);
     }
-
-    .grid {
-      display: grid;
-      gap: 12px;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    .grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); }
+    label { font-size:12px; color: var(--muted); display:block; margin-bottom:6px; }
+    input[type="date"], input[type="number"], input[type="text"]{
+      width:100%; background: transparent; color: var(--text);
+      border:1px solid var(--border); border-radius:10px; padding:10px 12px; outline:none;
     }
-
-    label {
-      font-size: 12px;
-      color: #a4acc4;
-      display: block;
-      margin-bottom: 6px;
-    }
-
-    input[type="date"],
-    input[type="number"],
-    input[type="text"] {
-      width: 100%;
-      background: #0f1320;
-      color: #e6e6e6;
-      border: 1px solid #212842;
-      border-radius: 10px;
-      padding: 10px 12px;
-      outline: none;
-    }
-
-    .row {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: end;
-    }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:end; }
 
     button {
-      background: #2b5cff;
-      color: #fff;
-      border: none;
-      border-radius: 10px;
-      padding: 10px 14px;
-      cursor: pointer;
-      font-weight: 600;
+      background: var(--btn); color: var(--btn-text); border:none;
+      border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:600;
     }
-
     button.ghost {
-      background: transparent;
-      border: 1px solid #2b5cff;
-      color: #cbd6ff;
+      background: var(--btn-ghost); color: var(--btn); border:1px solid var(--btn-ghost-border);
     }
-
-    button:disabled {
-      opacity: .6;
-      cursor: not-allowed;
-    }
-
-    .muted {
-      color: #9aa6bf;
-      font-size: 12px;
-    }
+    button.icon { display:inline-flex; align-items:center; gap:6px; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .muted { color: var(--muted); font-size:12px; }
+    a { color: inherit; text-decoration: none; }
   </style>
 </head>
 
 <body>
   <header>
+    <a class="icon" href="admin.html" aria-label="Voltar ao dashboard">← Voltar</a>
     <div class="brand">📊 Relatórios — Admin</div>
-    <div><button id="btnLogout" class="ghost">Sair</button></div>
+    <div class="spacer"></div>
+    <button id="themeToggle" class="ghost icon" type="button" aria-label="Alternar tema">🌙/☀️</button>
+    <button id="btnLogout" class="ghost">Sair</button>
   </header>
 
   <main class="wrap">
+    <!-- Bloco de filtros + relatórios “rápidos” (rotas antigas) -->
     <section class="card" style="margin-bottom:16px">
       <div class="grid">
         <div>
@@ -136,12 +112,15 @@
         <button id="btnAtrasos">Excel — Resumo de Atrasos</button>
       </div>
     </section>
+
+    <!-- Mini-IA: “me envie o diário de bordo do cliente X” -->
     <section class="card" style="margin-bottom:16px">
       <label>Comando (mini-IA)</label>
-      <input id="cmd" type="text" placeholder='ex.: "me envie o diario de bordo do cliente Totalplast"' />
+      <input id="cmd" type="text" placeholder='ex.: "me envie o diário de bordo do cliente Totalplast"' />
       <div class="row" style="margin-top:8px">
+        <!-- inputs ocultos para anexar as 2 planilhas -->
         <input id="fileFonte" type="file" accept=".xlsx,.xls" style="display:none" />
-        <input id="fileInfo" type="file" accept=".xlsx,.xls" style="display:none" />
+        <input id="fileInfo"  type="file" accept=".xlsx,.xls" style="display:none" />
         <button id="btnCmd">Executar comando</button>
         <span class="muted">Quando pedir "diário de bordo", vou solicitar 2 planilhas e devolver um PDF.</span>
       </div>
@@ -151,11 +130,33 @@
       <div id="log" class="muted">Pronto para gerar relatórios…</div>
     </section>
   </main>
+
+  <!-- Firebase (como no resto do app) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-  <script> window.API_BASE_URL = "https://rastreamento-backend-05pi.onrender.com";</script>
-  <script src="js/firebase-init.js"></script>
-  <script src="./admin-reports.js"></script>
-</body>
 
+  <!-- Base da API do backend (ajuste se precisar) -->
+  <script> window.API_BASE_URL = "https://rastreamento-backend-05pi.onrender.com"; </script>
+
+  <!-- Inicialização do Firebase do seu projeto -->
+  <script src="js/firebase-init.js"></script>
+
+  <!-- Tema claro/escuro (salva preferência) -->
+  <script>
+    (function themeBoot() {
+      const root = document.documentElement;
+      const saved = localStorage.getItem('theme2');
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const initial = saved || (prefersDark ? 'dark' : 'light');
+      set(initial);
+      document.getElementById('themeToggle')?.addEventListener('click', () => {
+        set(root.classList.contains('dark') ? 'light' : 'dark');
+      });
+      function set(mode) { root.classList.toggle('dark', mode === 'dark'); localStorage.setItem('theme2', mode); }
+    })();
+  </script>
+
+  <!-- JS da página (corrigido caminho para /js) -->
+  <script src="js/admin-reports.js?v=2"></script>
+</body>
 </html>

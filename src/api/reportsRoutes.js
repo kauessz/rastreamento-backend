@@ -2,26 +2,79 @@ const express = require('express');
 const router = express.Router();
 const reports = require('../controllers/reportsController');
 const authMiddleware = require('../middlewares/authMiddleware');
-const isAdmin        = require('../middlewares/adminMiddleware');
+const isAdmin = require('../middlewares/adminMiddleware');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const { buildDiarioPDF } = require('../services/diarioPdf'); // novo serviço
 const nodemailer = require('nodemailer'); // para enviar e-mails
+const xlsx = require('xlsx');
 
-// Gera o PDF do Diário de Bordo a partir de duas planilhas (mini-IA do front)
+// utils simples
+const norm = s => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const rootName = s => norm(s)
+  .replace(/\b(s\/a|s\.a\.|ltda|me|epp|sa| - .*)\b/g, '')   // remove sufixos comuns e “ - FILIAL…”
+  .replace(/[^\w\s]/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+function sheetToJson(buf) {
+  const wb = xlsx.read(buf, { type: 'buffer' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return xlsx.utils.sheet_to_json(ws, { defval: null });
+}
+function pickCol(row, aliases) {
+  if (!row) return null;
+  for (const k of Object.keys(row)) {
+    const nk = norm(k);
+    if (aliases.some(a => nk.includes(a))) return k;
+  }
+  return null;
+}
+function findClientColumn(rows) {
+  const first = rows[0] || {};
+  return pickCol(first, ['embarcador', 'cliente', 'razao', 'tomador', 'remet', 'remetente', 'dest', 'destinatario']);
+}
+function hasClient(rows, col, target) {
+  if (!col) return false;
+  const tgt = rootName(target);
+  return rows.some(r => {
+    const v = rootName(r[col] || '');
+    return v && (v.includes(tgt) || tgt.includes(v)); // tolerante (AMBEV vs AMBEV S/A PIRAI)
+  });
+}
+
 router.post('/diario-de-bordo',
   authMiddleware, isAdmin,
   upload.fields([{ name: 'fonte', maxCount: 1 }, { name: 'informacoes', maxCount: 1 }]),
   async (req, res) => {
     try {
+      const { start = '', end = '', cliente = '' } = req.body || {};
       if (!req.files?.fonte?.[0] || !req.files?.informacoes?.[0]) {
-        return res.status(400).json({ message: 'Envie as duas planilhas: "fonte" e "informacoes".' });
+        return res.status(400).json({ error: 'Envie as duas planilhas: "fonte" e "informacoes".' });
       }
-      const start = req.body.start || '';
-      const end = req.body.end || '';
-      const cliente = (req.body.cliente || '').replace(/.*cliente\s+/i,'').trim();
-      const periodo = `Período: ${start} a ${end}`;
+      if (!cliente) {
+        return res.status(400).json({ error: 'Informe o cliente no comando (ex.: "… do cliente AMBEV").' });
+      }
 
+      // Lê as planilhas só para validar o embarcador/cliente
+      const base = sheetToJson(req.files.fonte[0].buffer);
+      const extra = sheetToJson(req.files.informacoes[0].buffer);
+
+      const c1 = findClientColumn(base);
+      const c2 = findClientColumn(extra);
+
+      const ok = hasClient(base, c1, cliente) || hasClient(extra, c2, cliente);
+      if (!ok) {
+        // pega alguns nomes que encontramos para ajudar
+        const tops = [c1 && base[0]?.[c1], c2 && extra[0]?.[c2]]
+          .filter(Boolean).slice(0, 5).map(String);
+        return res.status(400).json({
+          error: `As planilhas não parecem pertencer ao embarcador "${cliente.toUpperCase()}".`,
+          dica: tops.length ? `Exemplos encontrados: ${tops.join(', ')}` : undefined
+        });
+      }
+
+      const periodo = `Período: ${start} a ${end}`;
       const pdf = await buildDiarioPDF({
         cliente,
         periodo,
@@ -30,11 +83,11 @@ router.post('/diario-de-bordo',
       });
 
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="diario_de_bordo_${start}_a_${end}.pdf"`);
+      res.setHeader('Content-Disposition', `attachment; filename="diario_de_bordo_${rootName(cliente)}_${start}_a_${end}.pdf"`);
       res.send(pdf);
     } catch (err) {
       console.error('[diario-de-bordo]', err);
-      res.status(500).json({ message: 'Falha ao gerar PDF.' });
+      res.status(500).json({ error: 'Falha ao gerar relatório.' });
     }
   }
 );
@@ -44,7 +97,7 @@ router.post('/atrasos/send-emails', authMiddleware, isAdmin, async (req, res) =>
   try {
     const { start, end, companyId = 0 } = req.body || {};
     // TODO: troque por consulta real na sua base:
-    const recipients = (process.env.RECIPIENTS || '').split(',').map(s=>s.trim()).filter(Boolean);
+    const recipients = (process.env.RECIPIENTS || '').split(',').map(s => s.trim()).filter(Boolean);
     if (!recipients.length) return res.json({ ok: true, sent: 0, note: 'Sem destinatários cadastrados.' });
 
     const transporter = nodemailer.createTransport({
@@ -71,9 +124,9 @@ router.post('/atrasos/send-emails', authMiddleware, isAdmin, async (req, res) =>
 
 
 // Admin-only
-router.get('/daily',               authMiddleware, isAdmin, reports.getDailyReport);
-router.get('/top-ofensores.xlsx',  authMiddleware, isAdmin, reports.topOffendersExcel);
-router.get('/atrasos.xlsx',        authMiddleware, isAdmin, reports.resumoAtrasosExcel);
+router.get('/daily', authMiddleware, isAdmin, reports.getDailyReport);
+router.get('/top-ofensores.xlsx', authMiddleware, isAdmin, reports.topOffendersExcel);
+router.get('/atrasos.xlsx', authMiddleware, isAdmin, reports.resumoAtrasosExcel);
 
 // Webhook (se quiser, proteja com token via header)
 router.post('/hooks/new-file', reports.webhookNewFile);

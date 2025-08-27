@@ -2,8 +2,8 @@
   // ========= Base/API =========
   window.API_BASE_URL = window.API_BASE_URL || "https://rastreamento-backend-05pi.onrender.com";
   const API = window.API_BASE_URL;
-  const PAGE_SIZE = 10;              // página “normal”
-  const BULK_SIZE = 1000;            // para buscar “tudo” ao abrir modal filtrado
+  const PAGE_SIZE = 10;   // tabela principal
+  const BULK_SIZE = 1000; // para a “tela” com o filtro (modal)
 
   // ========= Tema =========
   const themeToggle = document.getElementById('checkbox');
@@ -20,6 +20,7 @@
 
   // ========= Elementos =========
   const userEmailEl      = document.getElementById('userEmail');
+
   const kpiTotalValue    = document.querySelector('#kpi-total .kpi-value');
   const kpiOntimeValue   = document.querySelector('#kpi-ontime .kpi-value');
   const kpiLateValue     = document.querySelector('#kpi-atrasadas .kpi-value');
@@ -30,15 +31,15 @@
   const filterBtn        = document.getElementById('filterButton');
   const clearBtn         = document.getElementById('clearFilterButton');
 
-  const tableBodyEl = document.querySelector('#clientOperationsTable tbody') ||
-                      document.querySelector('#operationsTable tbody') ||
-                      document.querySelector('table tbody');
-  const paginationEl = document.getElementById('paginationControls') ||
-                       document.getElementById('pagination');
+  const tableBodyEl = document.querySelector('#clientOperationsTable tbody')
+                    || document.querySelector('#operationsTable tbody')
+                    || document.querySelector('table tbody');
+  const paginationEl = document.getElementById('paginationControls')
+                    || document.getElementById('pagination');
 
-  // Barra de relatórios (admin)
-  const repStart = document.getElementById('repStart');
-  const repEnd   = document.getElementById('repEnd');
+  // barra de relatórios (admin)
+  const repStart = document.getElementById('repStart') || document.getElementById('start');
+  const repEnd   = document.getElementById('repEnd')   || document.getElementById('end');
   const btnTop   = document.getElementById('btnExcelTop');
   const btnAtr   = document.getElementById('btnExcelAtrasos');
 
@@ -47,8 +48,6 @@
   let currentToken = null;
   let currentPage  = 1;
   let currentFilters = { booking: '', data_previsao: '' };
-  window.CLIENT_COMPANY_ID = window.CLIENT_COMPANY_ID || 0;  // admin = 0 (todas)
-  window.AUTH_EMAIL        = window.AUTH_EMAIL || '';
 
   // ========= Utils =========
   const fmt   = (iso) => { try { return iso ? new Date(iso).toLocaleString('pt-BR') : 'N/A'; } catch { return 'N/A'; } };
@@ -92,7 +91,6 @@
     if (!user) { window.location.href = 'login.html'; return; }
     currentUser = user;
     userEmailEl && (userEmailEl.textContent = `Olá, ${user.email}`);
-    window.AUTH_EMAIL = user.email;
 
     try {
       currentToken = await user.getIdToken(true);
@@ -102,8 +100,6 @@
       return;
     }
 
-    await resolveClientCompanyId();
-
     // datas padrão na barra de relatórios
     const def = defaultPeriod();
     repStart && (repStart.value = def.start);
@@ -112,27 +108,14 @@
     bindAdminReportButtons();
     bindKpiClicks();
 
-    await fetchKpis();
-    await fetchOps(1, currentFilters);
+    await fetchKpis();           // agora: /api/dashboard/kpis
+    await fetchOps(1, currentFilters); // agora: /api/operations
   });
 
-  async function resolveClientCompanyId(){
-    if (Number(window.CLIENT_COMPANY_ID) > 0) return; // já definido
-    try {
-      const profile = await apiGet('/api/client/profile'); // admin: retorna algo padrão
-      if (profile && Number(profile.embarcador_id)>0){
-        window.CLIENT_COMPANY_ID = Number(profile.embarcador_id);
-        if (!window.AUTH_EMAIL && profile.email) window.AUTH_EMAIL = profile.email;
-      } else {
-        window.CLIENT_COMPANY_ID = 0; // admin = todas
-      }
-    } catch(e){ window.CLIENT_COMPANY_ID = 0; }
-  }
-
-  // ========= KPIs =========
+  // ========= KPIs (ADMIN) =========
   async function fetchKpis(){
     try {
-      const d = await apiGet('/api/client/kpis');
+      const d = await apiGet('/api/dashboard/kpis'); // <<<<<<<<<<<<<<<<<<
       kpiTotalValue  && (kpiTotalValue.textContent  = safe(d.total_operacoes));
       kpiOntimeValue && (kpiOntimeValue.textContent = safe(d.operacoes_on_time));
       kpiLateValue   && (kpiLateValue.textContent   = safe(d.operacoes_atrasadas));
@@ -148,8 +131,10 @@
       data_previsao: (filters.data_previsao||'').trim()
     };
     const q = qs({ page, pageSize: PAGE_SIZE, ...currentFilters });
+
     try{
-      const payload = await apiGet(`/api/client/operations?${q}`);
+      // ADMIN: usa /api/operations (protegido por isAdmin)
+      const payload = await apiGet(`/api/operations?${q}`); // <<<<<<<<<<<
       const list   = payload.items || payload.rows || payload.data || [];
       const total  = (payload.total ?? payload.count ?? payload.totalCount ?? 0);
       renderTable(list);
@@ -209,29 +194,37 @@
     fetchOps(1, { booking:'', data_previsao:'' });
   });
 
-  // ========= Relatórios (admin) — agora com Authorization =========
+  // ========= Relatórios (admin) — com Authorization =========
+  function getPeriod() {
+    const s = repStart?.value || defaultPeriod().start;
+    const e = repEnd?.value   || defaultPeriod().end;
+    return { start: s, end: e };
+  }
+
   function bindAdminReportButtons(){
     if (btnTop) btnTop.addEventListener('click', async ()=>{
       try {
-        const {start,end}=getAdminPeriod();
+        const {start,end}=getPeriod();
         await downloadAuth('/api/reports/top-ofensores.xlsx', {start,end,companyId:0},
           `top_ofensores_${start}_a_${end}.xlsx`);
       } catch (e) { console.error(e); alert('Falha ao gerar Excel de Top 10 Ofensores.'); }
     });
     if (btnAtr) btnAtr.addEventListener('click', async ()=>{
       try {
-        const {start,end}=getAdminPeriod();
+        const {start,end}=getPeriod();
         await downloadAuth('/api/reports/atrasos.xlsx', {start,end,companyId:0},
           `resumo_atrasos_${start}_a_${end}.xlsx`);
       } catch (e) { console.error(e); alert('Falha ao gerar Excel de Atrasos.'); }
     });
   }
 
-  // ========= KPIs clicáveis ⇒ “nova tela” (modal) =========
+  // ========= KPIs clicáveis ⇒ “tela” (modal) =========
   function bindKpiClicks(){
-    document.querySelectorAll('.kpi-card[data-filter]')?.forEach(el=>{
-      el.style.cursor = 'pointer';
-      el.addEventListener('click', ()=> openFilteredModal(el.dataset.filter));
+    const totalCard = document.getElementById('kpi-total');
+    const onCard    = document.getElementById('kpi-ontime');
+    const lateCard  = document.getElementById('kpi-atrasadas');
+    [ [totalCard,'total'], [onCard,'on_time'], [lateCard,'atrasadas'] ].forEach(([el,mode])=>{
+      if(!el) return; el.style.cursor='pointer'; el.addEventListener('click',()=>openFilteredModal(mode));
     });
   }
 
@@ -241,7 +234,7 @@
     for(;;){
       const q = qs({ page, pageSize: BULK_SIZE, ...filters });
       try{
-        const payload = await apiGet(`/api/client/operations?${q}`);
+        const payload = await apiGet(`/api/operations?${q}`);
         const chunk = payload.items || payload.rows || payload.data || [];
         list.push(...chunk);
         if (chunk.length < BULK_SIZE) break;
@@ -317,10 +310,10 @@
       </div>`;
   }
 
-  // Assistente (atalho)
+  // Assistente (atalho) – se mantiver o Dialogflow no admin
   window.openAssistant = () => {
     const df = document.querySelector('df-messenger');
     if (df) df.setAttribute('expanded','true');
   };
 
-})(); 
+})();

@@ -17,7 +17,6 @@
   themeToggle?.addEventListener('change', () => {
     body.classList.toggle('dark-mode');
     localStorage.setItem('theme', body.classList.contains('dark-mode') ? 'dark-mode' : 'light-mode');
-    // ajusta gráficos ao tema
     refreshChartsTheme();
   });
 
@@ -131,9 +130,9 @@
     await fetchKpisWithFallback();
     await fetchOps(1, currentFilters);
 
-    // carrega embarcadores no filtro a partir do dataset
+    // se ainda não temos dataset completo, baixa em background p/ filtros e gráficos
+    if (!currentAllOps.length) currentAllOps = await fetchAllOps({});
     populateEmbarcadorFilter(currentAllOps);
-    // gráficos iniciais
     updateChartsFromOps(currentAllOps);
   });
 
@@ -141,19 +140,34 @@
   async function fetchKpisWithFallback(){
     try {
       const d = await apiGet('/api/dashboard/kpis');
-      setKpis(d.total_operacoes, d.operacoes_on_time, d.operacoes_atrasadas);
+      // aceita os 2 formatos: {kpis:{...}} OU flat
+      const k = d?.kpis || d;
+      setKpis(k.total_operacoes, k.operacoes_on_time, k.operacoes_atrasadas);
+
+      // se o back já mandou dados p/ gráficos, usa direto
+      if (d?.grafico_ofensores && d?.grafico_clientes_atraso) {
+        const go = d.grafico_ofensores, gc = d.grafico_clientes_atraso;
+        drawBar('ofensoresChart', 'Top 10 Ofensores', go.labels || [], go.data || [], 'ofensores');
+        drawBar('clientesChart',  'Top 10 Clientes',  gc.labels || [], gc.data || [], 'clientes');
+        return;
+      }
+
+      // caso venha só os KPIs, faz o fallback para gráficos
+      if (!currentAllOps.length) currentAllOps = await fetchAllOps({});
+      updateChartsFromOps(currentAllOps);
     } catch (e) {
-      // Fallback: computa a partir de todas as operações
+      // Fallback total: computa tudo pelo dataset
       currentAllOps = await fetchAllOps({});
       const { total, onTime, late } = aggregateKpis(currentAllOps);
       setKpis(total, onTime, late);
+      updateChartsFromOps(currentAllOps);
     }
   }
   function setKpis(total, onTime, late){
     const pct = total ? Math.round((late/total)*10000)/100 : 0;
-    kpiTotalValue  && (kpiTotalValue.textContent  = String(total));
-    kpiOntimeValue && (kpiOntimeValue.textContent = String(onTime));
-    kpiLateValue   && (kpiLateValue.textContent   = String(late));
+    kpiTotalValue  && (kpiTotalValue.textContent  = String(total ?? 0));
+    kpiOntimeValue && (kpiOntimeValue.textContent = String(onTime ?? 0));
+    kpiLateValue   && (kpiLateValue.textContent   = String(late ?? 0));
     kpiPctValue    && (kpiPctValue.textContent    = `${pct}%`);
   }
   function isLateStatus(s){ return /atras/.test((s||'').toLowerCase()); }
@@ -176,14 +190,15 @@
       data_previsao: (filters.data_previsao||'').trim(),
       embarcador: (filters.embarcador||'').trim()
     };
-    const q = qs({ page, pageSize: PAGE_SIZE, ...currentFilters });
+    // usa "limit" (o back espera "limit")
+    const q = qs({ page, limit: PAGE_SIZE, ...currentFilters });
     try{
       const payload = await apiGet(`/api/operations?${q}`);
       const list   = payload.items || payload.rows || payload.data || [];
-      // aplica apelidos no embarcador
       list.forEach(applyAliasToOp);
       renderTable(list);
-      const total  = (payload.total ?? payload.count ?? payload.totalCount ?? 0);
+
+      const total  = (payload.total ?? payload.count ?? payload.totalCount ?? payload?.pagination?.totalItems ?? 0);
       renderPagination(total, page, PAGE_SIZE);
     }catch(e){
       console.error('Ops:', e);
@@ -195,7 +210,7 @@
     const list = [];
     let page = 1;
     for(;;){
-      const q = qs({ page, pageSize: BULK_SIZE, ...filters });
+      const q = qs({ page, limit: BULK_SIZE, ...filters });
       try{
         const payload = await apiGet(`/api/operations?${q}`);
         const chunk = payload.items || payload.rows || payload.data || [];
@@ -224,7 +239,6 @@
       td.colSpan=9; td.textContent='Nenhuma operação encontrada.'; tr.appendChild(td); tableBodyEl.appendChild(tr); return;
     }
     for(const op of items){
-      // campos com mapeamento tolerante
       const booking   = firstOf(op, ['booking'], 'N/A');
       const containers= firstOf(op, ['containers','container','conteiner'], 'N/A');
       const embarc    = firstOf(op, ['nome_embarcador','embarcador'], 'N/A');
@@ -236,7 +250,6 @@
       const motivo    = firstOf(op, ['motivo_atraso','motivo_do_atraso','motivo'], 'N/A');
       const status    = firstOf(op, ['status_operacao','status'], 'N/A');
 
-      // linha principal
       const tr = document.createElement('tr');
       tr.className = 'main-row';
       tr.innerHTML = `
@@ -252,7 +265,6 @@
       `;
       tableBodyEl.appendChild(tr);
 
-      // linha de detalhes (expansível)
       const det = document.createElement('tr');
       det.className = 'details-row';
       det.innerHTML = `
@@ -273,15 +285,12 @@
       tableBodyEl.appendChild(det);
     }
   }
-
   function bindTableExpand(){
     tableBodyEl?.addEventListener('click', (e) => {
       const tr = e.target.closest('tr.main-row');
       if (!tr) return;
       const next = tr.nextElementSibling;
-      if (next && next.classList.contains('details-row')) {
-        next.classList.toggle('visible'); // CSS já tem .details-row/.visible
-      }
+      if (next && next.classList.contains('details-row')) next.classList.toggle('visible');
     });
   }
 
@@ -340,16 +349,15 @@
           `resumo_atrasos_${start}_a_${end}.xlsx`);
       } catch (e) { console.error(e); alert('Falha ao gerar Excel de Atrasos.'); }
     });
+    navReportsBtn?.addEventListener('click', ()=> window.location.href='admin-reports.html');
   }
 
   // ========= Gráficos =========
   function refreshChartsTheme(){
-    // apenas força redraw para cores do tema (texto/eixos)
     if (CHARTS.ofensores) CHARTS.ofensores.update();
-    if (CHARTS.clientes) CHARTS.clientes.update();
+    if (CHARTS.clientes)  CHARTS.clientes.update();
   }
   function updateChartsFromOps(items){
-    // Top motivos de atraso
     const motivoKey = (op) => firstOf(op, ['motivo_atraso','motivo_do_atraso','motivo'], 'Sem motivo');
     const mapMotivo = new Map();
     for (const op of items) {
@@ -361,7 +369,6 @@
     const motivos = [...mapMotivo.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
     drawBar('ofensoresChart', 'Top 10 Ofensores', motivos.map(x=>x[0]), motivos.map(x=>x[1]), 'ofensores');
 
-    // Top clientes com atraso
     const mapCli = new Map();
     for (const op of items) {
       const s = firstOf(op,['status_operacao','status'],'');
@@ -391,33 +398,102 @@
     else { if (CHARTS.clientes) CHARTS.clientes.destroy(); CHARTS.clientes = new Chart(ctx, cfg); }
   }
 
+  // ========= KPI Clicks (modal) =========
+  function bindKpiClicks(){
+    const totalCard = document.getElementById('kpi-total');
+    const onCard    = document.getElementById('kpi-ontime');
+    const lateCard  = document.getElementById('kpi-atrasadas');
+    const map = [
+      [totalCard,'total'],
+      [onCard,'on_time'],
+      [lateCard,'atrasadas'],
+    ];
+    map.forEach(([el,mode])=>{
+      if (!el) return;
+      el.style.cursor='pointer';
+      el.addEventListener('click', ()=> openFilteredModal(mode));
+    });
+  }
+  function openFilteredModal(mode){
+    const titles = { total:'Todas as operações', on_time:'Operações On Time', atrasadas:'Operações Atrasadas' };
+    const overlay = document.createElement('div');
+    overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9998;';
+    const modal = document.createElement('div');
+    modal.style.cssText='position:fixed;inset:5%;background:#fff;color:#111;border-radius:14px;padding:16px;z-index:9999;overflow:auto;';
+    if (document.body.classList.contains('dark-mode')) { modal.style.background='#0b1220'; modal.style.color='#e5e7eb'; }
+    modal.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h3 style="margin:0">${titles[mode]||'Operações'}</h3>
+        <button id="closeModal" class="btn">Fechar</button>
+      </div>
+      <div id="modalContent">Carregando…</div>`;
+    document.body.appendChild(overlay);
+    document.body.appendChild(modal);
+    document.getElementById('closeModal').onclick = ()=>{ modal.remove(); overlay.remove(); };
+
+    (async()=>{
+      try{
+        const all = currentAllOps.length ? currentAllOps : await fetchAllOps(currentFilters);
+        const sub = (mode==='total') ? all : all.filter(op => {
+          const s = firstOf(op,['status_operacao','status'],'');
+          if (mode==='atrasadas') return isLateStatus(s);
+          if (mode==='on_time')   return isOnTimeStatus(s);
+          return true;
+        });
+        document.getElementById('modalContent').innerHTML = renderMiniTable(sub);
+      }catch{
+        document.getElementById('modalContent').textContent='Falha ao carregar operações.';
+      }
+    })();
+  }
+  function renderMiniTable(items){
+    if (!items.length) return '<p>Nenhuma operação.</p>';
+    const rows = items.slice(0,1000).map(op=>`
+      <tr>
+        <td>${safe(firstOf(op,['booking'],'N/A'))}</td>
+        <td>${safe(firstOf(op,['containers','container','conteiner'],'N/A'))}</td>
+        <td>${safe(firstOf(op,['nome_embarcador','embarcador'],'N/A'))}</td>
+        <td>${fmt(firstOf(op,['previsao_inicio_atendimento'],null))}</td>
+        <td>${fmt(firstOf(op,['dt_inicio_execucao'],null))}</td>
+        <td>${fmt(firstOf(op,['dt_fim_execucao'],null))}</td>
+        <td>${safe(firstOf(op,['status_operacao','status'],'N/A'))}</td>
+      </tr>`).join('');
+    return `
+      <div class="table-wrapper">
+        <table class="operations-table">
+          <thead><tr>
+            <th>Booking</th><th>Contêiner</th><th>Embarcador</th>
+            <th>Prev. Atendimento</th><th>Início Execução</th><th>Fim Execução</th><th>Status</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <p style="margin-top:8px" class="muted">Exibindo até 1000 registros.</p>
+      </div>`;
+  }
+
   // ========= Gerenciador de Apelidos =========
   async function loadAliases(){
-    // tenta do backend
     try{
       const list = await apiGet('/api/aliases');
       aliasMap = {};
       for (const a of list) aliasMap[norm(a.alias)] = a.master;
     }catch{
-      // fallback localStorage
       try { aliasMap = JSON.parse(localStorage.getItem('aliasMap')||'{}'); } catch { aliasMap = {}; }
     }
     renderAliasesTable();
   }
   async function saveAlias(alias, master){
-    const payload = { alias, master };
     try{
       await fetch(`${API}/api/aliases`, {
         method: 'POST',
         headers: { 'Content-Type':'application/json', ...(currentToken?{Authorization:`Bearer ${currentToken}`}:{}) },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ alias, master })
       });
     }catch{
-      // fallback local
       aliasMap[norm(alias)] = master;
       localStorage.setItem('aliasMap', JSON.stringify(aliasMap));
     }
-    await fetchOps(currentPage, currentFilters); // re-render com alias aplicado
+    await fetchOps(currentPage, currentFilters);
     renderAliasesTable();
   }
   function renderAliasesTable(){
@@ -429,27 +505,24 @@
       return;
     }
     for (const [aliasNorm, master] of rows){
-      const alias = aliasNorm; // já normalizado
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td>${alias}</td>
+        <td>${aliasNorm}</td>
         <td>${master}</td>
         <td><input type="text" class="newMaster" placeholder="Novo mestre (ex.: AMBEV)" /></td>
         <td><button class="button-reassign">Reassociar</button></td>`;
-      const btn = tr.querySelector('.button-reassign');
-      btn.addEventListener('click', () => {
+      tr.querySelector('.button-reassign').addEventListener('click', () => {
         const newMaster = tr.querySelector('.newMaster').value.trim();
         if (!newMaster) return alert('Informe o novo mestre.');
-        saveAlias(alias, newMaster);
+        saveAlias(aliasNorm, newMaster);
       });
       aliasesTableBody.appendChild(tr);
     }
   }
 
-  // Assistente (atalho) – se mantiver o Dialogflow no admin
+  // Atalho: abre o chat (se mantiver o Dialogflow no admin)
   window.openAssistant = () => {
     const df = document.querySelector('df-messenger');
     if (df) df.setAttribute('expanded','true');
   };
-
 })();

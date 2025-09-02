@@ -1,60 +1,75 @@
-// Em: frontend/js/login.js (substitua tudo)
+// frontend/js/login.js
 document.addEventListener('DOMContentLoaded', () => {
-    const loginForm = document.getElementById('loginForm');
-    const messageElement = document.getElementById('message');
+  const API_BASE = window.API_BASE || 'https://rastreamento-backend-05pi.onrender.com';
 
-    loginForm.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const email = document.getElementById('email').value;
-        const password = document.getElementById('password').value;
+  const loginForm = document.getElementById('loginForm');
+  const messageElement = document.getElementById('message');
 
-        messageElement.textContent = 'Entrando...';
-        messageElement.style.color = 'gray';
+  function showMsg(text, color = 'gray') {
+    messageElement.textContent = text;
+    messageElement.style.color = color;
+  }
 
-        try {
-            // 1. Faz o login no Firebase
-            const userCredential = await auth.signInWithEmailAndPassword(email, password);
-            const user = userCredential.user;
+  loginForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
 
-            // 2. Pega o token para se comunicar com nossa API
-            const idToken = await user.getIdToken(true);
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
 
-            console.log('projectId(front):', firebase.app().options.projectId);
-            console.log('idToken prefix:', (idToken || '').slice(0, 14));
+    showMsg('Entrando...', 'gray');
 
-            // 3. Pergunta para a nossa API: "Quem é este usuário?"
-            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/users/me', {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${idToken}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            const profile = await response.json();
-            if (!response.ok) { throw new Error(profile.message || 'Falha no /me'); }
+    try {
+      // 1) Login Firebase
+      const userCredential = await auth.signInWithEmailAndPassword(email, password);
+      const user = userCredential.user;
 
-            // 4. Decide para onde redirecionar com base na resposta da API
-            if (profile.role === 'admin') {
-                messageElement.textContent = 'Login como Admin bem-sucedido! Redirecionando...';
-                messageElement.style.color = 'green';
-                window.location.href = 'dashboard.html';
-            } else if (profile.role === 'embarcador') {
-                if (profile.status === 'ativo') {
-                    messageElement.textContent = 'Login bem-sucedido! Redirecionando...';
-                    messageElement.style.color = 'green';
-                    window.location.href = 'client-dashboard.html'; // <-- A NOVA PÁGINA DO CLIENTE
-                } else {
-                    // Se o status for 'pendente'
-                    throw new Error('Sua conta ainda está aguardando aprovação do administrador.');
-                }
-            } else {
-                throw new Error('Tipo de usuário desconhecido.');
-            }
+      // 2) ID Token p/ backend
+      const idToken = await user.getIdToken(true);
 
-        } catch (error) {
-            console.error('Erro no login:', error);
-            messageElement.textContent = `Erro: ${error.message}`;
-            messageElement.style.color = 'red';
+      // Guarda (para outros fetches no front)
+      try {
+        localStorage.setItem('idToken', idToken);
+        sessionStorage.setItem('idToken', idToken);
+      } catch (_) {}
+
+      console.log('projectId(front):', firebase.app().options.projectId);
+      console.log('idToken prefix:', (idToken || '').slice(0, 14));
+
+      // 3) Perfil no backend
+      const resp = await fetch(`${API_BASE}/api/users/me`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+          // não precisa enviar Content-Type no GET
         }
-    });
+      });
+
+      const raw = await resp.text(); // parse robusto
+      let profile;
+      try {
+        profile = JSON.parse(raw);
+      } catch {
+        throw new Error(`Resposta inesperada do servidor (${resp.status}).`);
+      }
+      if (!resp.ok) {
+        throw new Error(profile?.message || profile?.error || `Falha (${resp.status})`);
+      }
+
+      // 4) Decisão: admin (dashboard) ou cliente (client-dashboard)
+      const isAdmin = !!(profile.admin === true || profile.role === 'admin');
+
+      if (isAdmin) {
+        showMsg('Login como Admin bem-sucedido! Redirecionando...', 'green');
+        setTimeout(() => (window.location.href = 'dashboard.html'), 300);
+      } else {
+        // se quiser bloquear por status, adicione: if (profile.status !== 'ativo') { throw new Error(...) }
+        showMsg('Login bem-sucedido! Redirecionando...', 'green');
+        setTimeout(() => (window.location.href = 'client-dashboard.html'), 300);
+      }
+
+    } catch (error) {
+      console.error('Erro no login:', error);
+      showMsg(`Erro: ${error.message}`, 'red');
+    }
+  });
 });

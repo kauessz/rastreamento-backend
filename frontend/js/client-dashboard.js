@@ -49,12 +49,44 @@
   const qs   = (o) => {const p=new URLSearchParams(); for (const [k,v] of Object.entries(o)) if(v!=null&&v!=='') p.append(k,v); return p.toString();};
   const todayISO = () => (new Date()).toISOString().slice(0,10);
   const defaultPeriod = () => {const end=todayISO(); const s=new Date(Date.now()-30*864e5).toISOString().slice(0,10); return {start:s,end};};
+
+  // ========= HTTP helpers (com Authorization) =========
   async function apiGet(path, withAuth=true){
-    const headers={'Content-Type':'application/json'};
+    const headers={'Accept':'application/json','Content-Type':'application/json'};
     if(withAuth && currentToken) headers.Authorization = `Bearer ${currentToken}`;
     const r = await fetch(`${API}${path}`, {headers});
-    if(!r.ok) throw new Error(await r.text()||`HTTP ${r.status}`);
-    return r.json();
+    const raw = await r.text();
+    if(!r.ok){
+      // tenta extrair mensagem JSON; senão devolve o texto cru (ex.: HTML 404)
+      try { const j = JSON.parse(raw); throw new Error(j.message || j.error || `HTTP ${r.status}`); }
+      catch { throw new Error(raw || `HTTP ${r.status}`); }
+    }
+    return raw ? JSON.parse(raw) : {};
+  }
+  async function apiFetchBlob(path, params) {
+    const q = params ? `?${new URLSearchParams(params).toString()}` : '';
+    const headers = currentToken ? { Authorization: `Bearer ${currentToken}` } : {};
+    const resp = await fetch(`${API}${path}${q}`, { headers });
+    const blob = await resp.blob();
+    if(!resp.ok){
+      // tenta ler mensagem de erro, se vier JSON/text
+      try {
+        const text = await blob.text();
+        throw new Error(text || `HTTP ${resp.status}`);
+      } catch {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+    }
+    return blob;
+  }
+  async function downloadAuth(path, params, filename) {
+    const blob = await apiFetchBlob(path, params);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename || 'download';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 800);
   }
 
   // ========= Auth =========
@@ -67,11 +99,18 @@
     try { currentToken = await user.getIdToken(); }
     catch (e) { console.error('Token error:', e); window.location.href='login.html'; return; }
 
+    // logout
+    document.getElementById('logoutButton')?.addEventListener('click', async () => {
+      try { await firebase.auth().signOut(); } finally { window.location.href = 'login.html'; }
+    });
+
     await resolveClientCompanyId();
 
     const def = defaultPeriod();
-    document.getElementById('repStartClient')?.setAttribute('value', def.start);
-    document.getElementById('repEndClient')?.setAttribute('value', def.end);
+    const s = document.getElementById('repStartClient');
+    const e = document.getElementById('repEndClient');
+    if (s) s.value = def.start;
+    if (e) e.value = def.end;
     bindClientReportButtons();
 
     await fetchKpis();
@@ -206,17 +245,29 @@
     alert('Abri o assistente. Cole a pergunta e envie:\n\n' + q);
   });
 
-  // Excel
-  function getPeriod(){ const s=document.getElementById('repStartClient')?.value; const e=document.getElementById('repEndClient')?.value; if(!s||!e){const d=defaultPeriod();return d;} return {start:s,end:e};}
-  function openReport(path,params){ const q=new URLSearchParams(params).toString(); window.open(`${API}${path}?${q}`,'_blank');}
+  // Excel (AUTENTICADO)
+  function getPeriod(){
+    const s=document.getElementById('repStartClient')?.value;
+    const e=document.getElementById('repEndClient')?.value;
+    if(!s||!e){const d=defaultPeriod();return d;}
+    return {start:s,end:e};
+  }
   function bindClientReportButtons(){
-    document.getElementById('btnExcelTopClient')?.addEventListener('click', ()=>{
-      const {start,end}=getPeriod(); const companyId=window.CLIENT_COMPANY_ID||0;
-      openReport('/api/reports/top-ofensores.xlsx',{start,end,companyId});
+    const btnTop  = document.getElementById('btnExcelTopClient');
+    const btnAtr  = document.getElementById('btnExcelAtrasosClient');
+    if (btnTop) btnTop.addEventListener('click', async ()=>{
+      try{
+        const {start,end}=getPeriod(); const companyId=window.CLIENT_COMPANY_ID||0;
+        await downloadAuth('/api/reports/top-ofensores.xlsx',{start,end,companyId},
+          `top_ofensores_${start}_a_${end}.xlsx`);
+      }catch(e){ console.error(e); alert('Falha ao gerar Excel de Top 10 Ofensores.');}
     });
-    document.getElementById('btnExcelAtrasosClient')?.addEventListener('click', ()=>{
-      const {start,end}=getPeriod(); const companyId=window.CLIENT_COMPANY_ID||0;
-      openReport('/api/reports/atrasos.xlsx',{start,end,companyId});
+    if (btnAtr) btnAtr.addEventListener('click', async ()=>{
+      try{
+        const {start,end}=getPeriod(); const companyId=window.CLIENT_COMPANY_ID||0;
+        await downloadAuth('/api/reports/atrasos.xlsx',{start,end,companyId},
+          `resumo_atrasos_${start}_a_${end}.xlsx`);
+      }catch(e){ console.error(e); alert('Falha ao gerar Excel de Atrasos.');}
     });
   }
 })();

@@ -132,6 +132,11 @@ app.post('/api/df/webhook', async (req, res) => {
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa ✅'));
 
+// 404 JSON para qualquer /api não atendida
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Not Found', path: req.originalUrl });
+});
+
 // ================================= Error Handler ==================================
 app.use((err, _req, res, _next) => {
   console.error('[error]', err);

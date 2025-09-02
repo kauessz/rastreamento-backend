@@ -1,47 +1,66 @@
 // frontend/js/register.js
 document.addEventListener('DOMContentLoaded', () => {
-    const registerForm = document.getElementById('registerForm');
-    const messageElement = document.getElementById('message');
+  const API_BASE = window.API_BASE || 'https://rastreamento-backend-05pi.onrender.com';
 
-    registerForm.addEventListener('submit', async (event) => {
-        event.preventDefault();
+  const registerForm = document.getElementById('registerForm');
+  const messageElement = document.getElementById('message');
 
-        const name = document.getElementById('name').value;
-        const company = document.getElementById('company').value;
-        const email = document.getElementById('email').value;
-        const password = document.getElementById('password').value;
+  function showMsg(text, color = 'gray') {
+    messageElement.textContent = text;
+    messageElement.style.color = color;
+  }
 
-        messageElement.textContent = 'Registrando...';
-        messageElement.style.color = 'gray';
+  registerForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
 
-        try {
-            // 1. Usa o SDK do Firebase para criar um novo usuário
-            const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-            const firebaseUser = userCredential.user;
+    const name = document.getElementById('name').value.trim();
+    const company = document.getElementById('company').value.trim();
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
 
-            // 2. Se deu certo, envia os dados para a nossa API Node.js
-            const response = await fetch('https://rastreamento-backend-05pi.onrender.com/api/users/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    firebase_uid: firebaseUser.uid,
-                    nome: name,
-                    email: email,
-                    nome_empresa: company,
-                }),
-            });
+    showMsg('Registrando...', 'gray');
 
-            const data = await response.json();
-            if (!response.ok) { throw new Error(data.message); }
+    try {
+      // 1) Cria usuário no Firebase
+      const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+      const firebaseUser = userCredential.user;
 
-            messageElement.textContent = 'Registro enviado com sucesso! Redirecionando para o login...';
-            messageElement.style.color = 'green';
-            setTimeout(() => { window.location.href = 'login.html'; }, 2000);
+      // 2) Token (se sua rota de registro exigir verificação)
+      const idToken = await firebaseUser.getIdToken(true);
 
-        } catch (error) {
-            console.error('Erro no registro:', error);
-            messageElement.textContent = `Erro: ${error.message}`;
-            messageElement.style.color = 'red';
-        }
-    });
+      // 3) Envia p/ backend (registro pendente/aprovação)
+      const resp = await fetch(`${API_BASE}/api/users/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // Se a rota for pública, o Authorization é opcional; se exigir, já está pronto:
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          firebase_uid: firebaseUser.uid,
+          nome: name,
+          email: email,
+          nome_empresa: company
+        })
+      });
+
+      const raw = await resp.text();
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new Error(`Resposta inesperada do servidor (${resp.status}).`);
+      }
+      if (!resp.ok) {
+        throw new Error(data?.message || data?.error || `Falha (${resp.status})`);
+      }
+
+      showMsg('Registro enviado com sucesso! Redirecionando para o login...', 'green');
+      setTimeout(() => { window.location.href = 'login.html'; }, 1500);
+
+    } catch (error) {
+      console.error('Erro no registro:', error);
+      showMsg(`Erro: ${error.message}`, 'red');
+    }
+  });
 });

@@ -12,7 +12,7 @@ const admin       = require('firebase-admin');
 
 const app = express();
 
-// ================================= Firebase Admin =================================
+/* ============================ Firebase Admin ============================ */
 (function initFirebaseAdmin() {
   try {
     if (admin.apps.length) return;
@@ -50,7 +50,7 @@ const app = express();
   }
 })();
 
-// ================================= Middlewares base ===============================
+/* ============================ Middlewares base ============================ */
 app.set('trust proxy', true);
 
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
@@ -60,7 +60,7 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true); // ferramentas internas/health
+    if (!origin) return cb(null, true);
     if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return cb(null, true);
     return cb(new Error(`CORS bloqueado: ${origin}`));
   },
@@ -76,8 +76,8 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 const limiter = rateLimit({ windowMs: 60 * 1000, max: 1200 });
 app.use('/api/', limiter);
 
-// ============================= Montagem tolerante de rotas ========================
-// Versão nova: usa require.resolve (resolve .js/index.js automaticamente)
+/* ======================== Montagem tolerante de rotas ===================== */
+// Usa require.resolve para respeitar a resolução do Node (sem depender de .js explícito)
 function tryMount(prefix, relPathFromSrc) {
   try {
     const full = require.resolve(path.join(__dirname, relPathFromSrc));
@@ -90,55 +90,80 @@ function tryMount(prefix, relPathFromSrc) {
   }
 }
 
-// Monte SOMENTE o que existir no seu src/
-tryMount('/api/operations', './api/operationRoutes');    // lista/paginação de operações
-tryMount('/api/dashboard',  './api/dashboardRoutes');    // KPIs do dashboard (se tiver)
-tryMount('/api/reports',    './api/reportsRoutes');      // geração de relatórios
-tryMount('/api/aliases',    './api/aliasesRoutes');      // gerenciador de apelidos
-tryMount('/api/analytics',  './api/analyticsRoutes');    // KPIs/diário do período
-tryMount('/api/emails',     './api/emailsRoutes');       // envio de e-mail diário
-tryMount('/api/users',      './api/userRoutes');         // *** PERFIL /api/users/me ***
-tryMount('/api/clients',    './api/clientRoutes');       // clientes (se existir)
-tryMount('/api/embarcador', './api/embarcadorRoutes');   // embarcadores (se existir)
+tryMount('/api/operations', './api/operationRoutes');
+tryMount('/api/dashboard',  './api/dashboardRoutes');
+tryMount('/api/reports',    './api/reportsRoutes');
+tryMount('/api/aliases',    './api/aliasesRoutes');
+tryMount('/api/analytics',  './api/analyticsRoutes');
+tryMount('/api/emails',     './api/emailsRoutes');
+tryMount('/api/users',      './api/userRoutes');       // alvo principal
+tryMount('/api/clients',    './api/clientRoutes');
+tryMount('/api/embarcador', './api/embarcadorRoutes');
 
-// ============================ Webhook simples do Assistente ========================
+/* =================== Fallback embutido: /api/users/me =================== */
+// Mesmo que userRoutes não monte, essa rota passa a existir.
+async function verifyBearer(req, res, next) {
+  try {
+    const auth = req.headers.authorization || '';
+    const idToken = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (!idToken) return res.status(401).json({ message: 'Não autorizado: Token não fornecido.' });
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    req.user = decoded;
+    next();
+  } catch (e) {
+    return res.status(401).json({ message: 'Não autorizado: Token inválido.', detail: e.message });
+  }
+}
+
+app.get(['/api/users/me', '/api/users/me*'], verifyBearer, (req, res) => {
+  const u = req.user || {};
+  const isAdmin =
+    u.admin === true ||
+    u.role === 'admin' ||
+    (u.customClaims && (u.customClaims.admin === true || u.customClaims.role === 'admin'));
+
+  res.json({
+    uid: u.uid,
+    email: u.email || null,
+    name: u.name || u.displayName || null,
+    admin: !!isAdmin
+  });
+});
+
+/* ================= Webhook simples do Assistente (opcional) ============== */
 app.post('/api/df/webhook', async (req, res) => {
   try {
     const query = (req.body?.queryResult?.queryText || req.body?.query || '').trim();
     const fulfillmentText = query
       ? `Entendi sua pergunta: "${query}". Vou buscar os dados e te retorno!`
       : 'Oi! Como posso ajudar no rastreamento?';
-    return res.json({ fulfillmentText });
+    res.json({ fulfillmentText });
   } catch (e) {
     console.error('[df-webhook] erro:', e);
-    return res.json({ fulfillmentText: 'Tive um problema ao processar a requisição.' });
+    res.json({ fulfillmentText: 'Tive um problema ao processar a requisição.' });
   }
 });
 
-// ================================= Health / Root ==================================
+/* ================================ Health/Root ============================= */
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa ✅'));
 
-// 404 JSON para qualquer /api não atendida (evita HTML e erro de parse no front)
+/* ========== 404 JSON p/ qualquer /api não atendida (evita HTML) ========== */
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'Not Found', path: req.originalUrl });
 });
 
-// ================================= Error Handler ==================================
+/* =============================== Error Handler ============================ */
 app.use((err, _req, res, _next) => {
   console.error('[error]', err);
   if (res.headersSent) return;
   res.status(500).json({ error: 'Erro interno' });
 });
 
-process.on('unhandledRejection', (reason) => {
-  console.error('[unhandledRejection]', reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('[uncaughtException]', err);
-});
+process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));
+process.on('uncaughtException',  (err)    => console.error('[uncaughtException]',  err));
 
-// ================================== Start =========================================
+/* ================================== Start ================================ */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`API up on :${PORT}`));
 

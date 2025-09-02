@@ -7,7 +7,6 @@ const morgan      = require('morgan');
 const compression = require('compression');
 const rateLimit   = require('express-rate-limit');
 const cors        = require('cors');
-const fs          = require('fs');
 const path        = require('path');
 const admin       = require('firebase-admin');
 
@@ -21,9 +20,7 @@ const app = express();
     const svcJson = process.env.FIREBASE_SERVICE_ACCOUNT;
     if (svcJson) {
       const creds = JSON.parse(svcJson);
-      admin.initializeApp({
-        credential: admin.credential.cert(creds)
-      });
+      admin.initializeApp({ credential: admin.credential.cert(creds) });
       console.log('[auth] Firebase Admin inicializado (JSON).');
       return;
     }
@@ -70,34 +67,26 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(helmet({
-  contentSecurityPolicy: false // desliga CSP por segurança até configurarmos fontes/scripts
-}));
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 1200
-});
+const limiter = rateLimit({ windowMs: 60 * 1000, max: 1200 });
 app.use('/api/', limiter);
 
 // ============================= Montagem tolerante de rotas ========================
-function tryMount(prefix, fileRelPath) {
+// Versão nova: usa require.resolve (resolve .js/index.js automaticamente)
+function tryMount(prefix, relPathFromSrc) {
   try {
-    const full = path.join(__dirname, fileRelPath);
-    if (fs.existsSync(full)) {
-      // eslint-disable-next-line import/no-dynamic-require, global-require
-      const router = require(full);
-      app.use(prefix, router);
-      console.log(`[routes] Mounted ${prefix} -> ${fileRelPath}`);
-    } else {
-      console.warn(`[routes] SKIP ${prefix}: arquivo não encontrado (${fileRelPath})`);
-    }
+    const full = require.resolve(path.join(__dirname, relPathFromSrc));
+    // eslint-disable-next-line import/no-dynamic-require, global-require
+    const router = require(full);
+    app.use(prefix, router);
+    console.log(`[routes] Mounted ${prefix} -> ${path.relative(__dirname, full)}`);
   } catch (e) {
-    console.error(`[routes] Falha ao montar ${prefix} (${fileRelPath}):`, e.message);
+    console.warn(`[routes] SKIP ${prefix}: ${relPathFromSrc} (${e.code || e.message})`);
   }
 }
 
@@ -108,7 +97,7 @@ tryMount('/api/reports',    './api/reportsRoutes');      // geração de relató
 tryMount('/api/aliases',    './api/aliasesRoutes');      // gerenciador de apelidos
 tryMount('/api/analytics',  './api/analyticsRoutes');    // KPIs/diário do período
 tryMount('/api/emails',     './api/emailsRoutes');       // envio de e-mail diário
-tryMount('/api/users',      './api/userRoutes');         // usuários (se existir)
+tryMount('/api/users',      './api/userRoutes');         // *** PERFIL /api/users/me ***
 tryMount('/api/clients',    './api/clientRoutes');       // clientes (se existir)
 tryMount('/api/embarcador', './api/embarcadorRoutes');   // embarcadores (se existir)
 
@@ -116,11 +105,9 @@ tryMount('/api/embarcador', './api/embarcadorRoutes');   // embarcadores (se exi
 app.post('/api/df/webhook', async (req, res) => {
   try {
     const query = (req.body?.queryResult?.queryText || req.body?.query || '').trim();
-
     const fulfillmentText = query
       ? `Entendi sua pergunta: "${query}". Vou buscar os dados e te retorno!`
       : 'Oi! Como posso ajudar no rastreamento?';
-
     return res.json({ fulfillmentText });
   } catch (e) {
     console.error('[df-webhook] erro:', e);
@@ -132,7 +119,7 @@ app.post('/api/df/webhook', async (req, res) => {
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa ✅'));
 
-// 404 JSON para qualquer /api não atendida
+// 404 JSON para qualquer /api não atendida (evita HTML e erro de parse no front)
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'Not Found', path: req.originalUrl });
 });

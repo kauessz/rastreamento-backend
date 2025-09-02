@@ -99,6 +99,33 @@
     return { start: s, end: e };
   }
 
+  // ========= Classificação de atraso / on-time =========
+  // Calcula a situação olhando valor numérico e HH:MM/ON TIME (quando existir)
+  function computeLateFlag(op) {
+    const s = (String(op.status_operacao || op.status || '')).toLowerCase();
+    const atrasoStr = String(op.atraso_hhmm ?? op.tempo_atraso_hhmm ?? '').toUpperCase().trim();
+    const atrasoNum = Number(op.tempo_atraso ?? op.atraso_minutos ?? 0);
+
+    // 1) numérico manda
+    if (!Number.isNaN(atrasoNum) && atrasoNum > 0) return { late: true, ontime: false };
+    if (!Number.isNaN(atrasoNum) && atrasoNum <= 0) return { late: false, ontime: true };
+
+    // 2) string do atraso
+    if (atrasoStr && atrasoStr !== 'N/A' && atrasoStr !== 'ON TIME' && atrasoStr !== '00:00' && atrasoStr !== '0:00') {
+      return { late: true, ontime: false };
+    }
+    if (atrasoStr === 'ON TIME' || atrasoStr === '00:00' || atrasoStr === '0:00') {
+      return { late: false, ontime: true };
+    }
+
+    // 3) heurística pelo status textual (fallback)
+    const isLate = /atras/.test(s);
+    const isOn   = /(on ?time|no prazo|pontual|sem atraso|programado)/.test(s);
+    return { late: isLate, ontime: !isLate && isOn };
+  }
+  function isLateStatus(op)   { return computeLateFlag(op).late;   }
+  function isOnTimeStatus(op) { return computeLateFlag(op).ontime; }
+
   // ========= Auth =========
   firebase.auth().onAuthStateChanged(async (user) => {
     if (!user) { window.location.href = 'login.html'; return; }
@@ -170,16 +197,14 @@
     kpiLateValue   && (kpiLateValue.textContent   = String(late ?? 0));
     kpiPctValue    && (kpiPctValue.textContent    = `${pct}%`);
   }
-  function isLateStatus(s){ return /atras/.test((s||'').toLowerCase()); }
-  function isOnTimeStatus(s){ return /(on ?time|no prazo|pontual|sem atraso)/.test((s||'').toLowerCase()); }
   function aggregateKpis(items){
-    let total=0, onTime=0, late=0;
+    let total=0,onTime=0,late=0;
     for(const op of items){
       total++;
-      const status = firstOf(op, ['status_operacao','status'], '');
-      if (isLateStatus(status)) late++; else if (isOnTimeStatus(status)) onTime++;
+      if (isLateStatus(op)) late++;
+      else if (isOnTimeStatus(op)) onTime++;
     }
-    return { total, onTime, late };
+    return { total,onTime,late };
   }
 
   // ========= Operações =========
@@ -239,16 +264,16 @@
       td.colSpan=9; td.textContent='Nenhuma operação encontrada.'; tr.appendChild(td); tableBodyEl.appendChild(tr); return;
     }
     for(const op of items){
-      const booking   = firstOf(op, ['booking'], 'N/A');
-      const containers= firstOf(op, ['containers','container','conteiner'], 'N/A');
-      const embarc    = firstOf(op, ['nome_embarcador','embarcador'], 'N/A');
-      const porto     = firstOf(op, ['porto','porto_origem'], 'N/A');
-      const prev      = firstOf(op, ['previsao_inicio_atendimento'], null);
-      const iniExec   = firstOf(op, ['dt_inicio_execucao'], null);
-      const fimExec   = firstOf(op, ['dt_fim_execucao'], null);
-      const atraso    = firstOf(op, ['atraso_hhmm','atraso','tempo_atraso','tempo_atraso_hhmm'], 'N/A');
-      const motivo    = firstOf(op, ['motivo_atraso','motivo_do_atraso','motivo'], 'N/A');
-      const status    = firstOf(op, ['status_operacao','status'], 'N/A');
+      const booking    = firstOf(op, ['booking'], 'N/A');
+      const containers = firstOf(op, ['containers','container','conteiner'], 'N/A');
+      const embarc     = firstOf(op, ['nome_embarcador','embarcador'], 'N/A');
+      const porto      = firstOf(op, ['porto','porto_origem'], 'N/A');
+      const prev       = firstOf(op, ['previsao_inicio_atendimento'], null);
+      const iniExec    = firstOf(op, ['dt_inicio_execucao'], null);
+      const fimExec    = firstOf(op, ['dt_fim_execucao'], null);
+      const atraso     = firstOf(op, ['atraso_hhmm','atraso','tempo_atraso','tempo_atraso_hhmm'], 'N/A');
+      const motivo     = firstOf(op, ['motivo_atraso','motivo_do_atraso','motivo'], 'N/A');
+      const status     = firstOf(op, ['status_operacao','status'], 'N/A');
 
       const tr = document.createElement('tr');
       tr.className = 'main-row';
@@ -265,17 +290,29 @@
       `;
       tableBodyEl.appendChild(tr);
 
+      // Detalhe com campos solicitados
+      const tipoOp       = firstOf(op, ['tipo_operacao','tipo','operacao_tipo'], 'N/A');
+      const transp       = firstOf(op, ['transportadora','transportadora_nome','carrier'], 'N/A');
+      const prog         = firstOf(op, ['numero_programacao','programacao','num_programacao'], 'N/A');
+      const motNome      = firstOf(op, ['motorista_nome','nome_motorista'], 'N/A');
+      const motCpf       = firstOf(op, ['motorista_cpf','cpf_motorista'], 'N/A');
+      const placaVeic    = firstOf(op, ['placa_veiculo','veiculo_placa','placa_cavalo'], 'N/A');
+      const placaCarreta = firstOf(op, ['placa_carreta','carreta_placa','placa_reboque'], 'N/A');
+
       const det = document.createElement('tr');
       det.className = 'details-row';
       det.innerHTML = `
         <td colspan="9" class="details-content">
           <div class="details-wrapper">
+            <span><strong>Tipo de Operação:</strong> ${safe(tipoOp)}</span>
+            <span><strong>Transportadora:</strong> ${safe(transp)}</span>
+            <span><strong>Nº Programação:</strong> ${safe(prog)}</span>
+            <span><strong>Motorista:</strong> ${safe(motNome)}</span>
+            <span><strong>CPF do Motorista:</strong> ${safe(motCpf)}</span>
+            <span><strong>Placa Veículo:</strong> ${safe(placaVeic)}</span>
+            <span><strong>Placa Carreta:</strong> ${safe(placaCarreta)}</span>
             <span><strong>Status:</strong> ${safe(status)}</span>
-            <span><strong>Booking:</strong> ${safe(booking)}</span>
-            <span><strong>Contêiner:</strong> ${safe(containers)}</span>
-            <span><strong>Embarcador:</strong> ${safe(embarc)}</span>
-            <span><strong>Porto:</strong> ${safe(porto)}</span>
-            <span><strong>Previsão de Atendimento:</strong> ${fmt(prev)}</span>
+            <span><strong>Previsão Atendimento:</strong> ${fmt(prev)}</span>
             <span><strong>Início Execução:</strong> ${fmt(iniExec)}</span>
             <span><strong>Fim Execução:</strong> ${fmt(fimExec)}</span>
             <span><strong>Atraso:</strong> ${safe(atraso)}</span>
@@ -358,30 +395,29 @@
     if (CHARTS.clientes)  CHARTS.clientes.update();
   }
   function updateChartsFromOps(items){
-    const motivoKey = (op) => firstOf(op, ['motivo_atraso','motivo_do_atraso','motivo'], 'Sem motivo');
+    // Top 10 Ofensores (motivos) – só quem está atrasado
     const mapMotivo = new Map();
     for (const op of items) {
-      const s = firstOf(op,['status_operacao','status'],'');
-      if (!isLateStatus(s)) continue;
-      const m = motivoKey(op);
+      if (!isLateStatus(op)) continue;
+      const m = firstOf(op, ['motivo_atraso','motivo_do_atraso','motivo'], 'Sem motivo');
       mapMotivo.set(m, (mapMotivo.get(m)||0)+1);
     }
     const motivos = [...mapMotivo.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
-    drawBar('ofensoresChart', 'Top 10 Ofensores', motivos.map(x=>x[0]), motivos.map(x=>x[1]), 'ofensores');
+    drawBar('ofensoresChart','Top 10 Ofensores', motivos.map(x=>x[0]), motivos.map(x=>x[1]), 'ofensores');
 
+    // Top 10 Clientes com atraso
     const mapCli = new Map();
     for (const op of items) {
-      const s = firstOf(op,['status_operacao','status'],'');
-      if (!isLateStatus(s)) continue;
+      if (!isLateStatus(op)) continue;
       const c = firstOf(op, ['nome_embarcador','embarcador'],'Sem cliente');
       mapCli.set(c, (mapCli.get(c)||0)+1);
     }
     const clientes = [...mapCli.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
-    drawBar('clientesChart', 'Top 10 Clientes', clientes.map(x=>x[0]), clientes.map(x=>x[1]), 'clientes');
+    drawBar('clientesChart','Top 10 Clientes', clientes.map(x=>x[0]), clientes.map(x=>x[1]), 'clientes');
   }
   function drawBar(canvasId, label, labels, data, which){
     const ctx = document.getElementById(canvasId);
-    if (!ctx) return;
+    if (!ctx || typeof Chart === 'undefined') return;
     const cfg = {
       type: 'bar',
       data: { labels, datasets: [{ label, data }] },
@@ -435,9 +471,8 @@
       try{
         const all = currentAllOps.length ? currentAllOps : await fetchAllOps(currentFilters);
         const sub = (mode==='total') ? all : all.filter(op => {
-          const s = firstOf(op,['status_operacao','status'],'');
-          if (mode==='atrasadas') return isLateStatus(s);
-          if (mode==='on_time')   return isOnTimeStatus(s);
+          if (mode==='atrasadas') return isLateStatus(op);
+          if (mode==='on_time')   return isOnTimeStatus(op);
           return true;
         });
         document.getElementById('modalContent').innerHTML = renderMiniTable(sub);

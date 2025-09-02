@@ -296,4 +296,3 @@ input:focus-visible, select:focus-visible{
 .details-content { background-color: var(--cor-fundo); }
 .details-wrapper { display:flex; flex-wrap:wrap; gap:24px; padding:12px; }
 .hidden { display: none !important; }             /* caso opte por usar .hidden */
-

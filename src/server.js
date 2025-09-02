@@ -111,6 +111,11 @@ app.use('/api/embarcadores', embarcadorRoutes);
 app.use('/api/client',       clientRoutes);
 app.use('/api/dashboard',    dashboardRoutes);
 app.use('/api/reports',      reportsRoutes);
+app.use('/api/aliases', require('./api/aliasesRoutes'));
+app.use('/api/analytics', require('./api/analyticsRoutes'));
+app.use('/api/emails', require('./api/emailsRoutes'));
+
+
 
 // ====================== Webhook Dialogflow (Messenger) =====================
 // Se você usa o Dialogflow Messenger (iframe) no front, esse webhook

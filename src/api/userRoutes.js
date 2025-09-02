@@ -1,60 +1,44 @@
 // src/api/userRoutes.js
 const express = require('express');
-const router = express.Router();
 const admin = require('firebase-admin');
 
-// Seus controllers e middlewares existentes
-const userController = require('../controllers/userController');
-const authMiddleware = require('../middlewares/authMiddleware');
-const isAdmin = require('../middlewares/adminMiddleware');
+const router = express.Router();
 
-/**
- * ROTA DE PERFIL DO USUÁRIO LOGADO
- * Aceita /me e também variações tipo /me:qualquerCoisa (cache-busting, etc.)
- * Retorna sempre JSON.
- */
-router.get(['/me', '/me*'], authMiddleware, async (req, res) => {
+async function verifyBearer(req, res, next) {
   try {
-    // Se o authMiddleware já populou req.user, usamos.
-    // Caso contrário, tentamos ler e verificar o token aqui (fallback).
-    let u = req.user;
-    if (!u) {
-      const auth = req.headers.authorization || '';
-      const idToken = auth.startsWith('Bearer ') ? auth.slice(7) : null;
-      if (!idToken) {
-        return res.status(401).json({ message: 'Não autorizado: Token não fornecido.' });
-      }
-      u = await admin.auth().verifyIdToken(idToken);
-    }
+    const auth = req.headers.authorization || '';
+    const idToken = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (!idToken) return res.status(401).json({ message: 'Não autorizado: Token não fornecido.' });
 
-    const isAdminFlag =
-      u.admin === true ||
-      u.role === 'admin' ||
-      (u.customClaims && (u.customClaims.admin === true || u.customClaims.role === 'admin'));
-
-    return res.json({
-      uid: u.uid,
-      email: u.email || null,
-      name: u.name || u.displayName || null,
-      admin: !!isAdminFlag,
-    });
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    req.user = decoded;
+    return next();
   } catch (e) {
     return res.status(401).json({ message: 'Não autorizado: Token inválido.', detail: e.message });
   }
-});
+}
 
 /**
- * ROTAS EXISTENTES (mantidas)
+ * ATENÇÃO:
+ * Nada de '/me*' ou '/me/*'. Use apenas '/me' (exato) ou a sintaxe nova '/me/:rest*' se precisar.
  */
+router.get('/me', verifyBearer, (req, res) => {
+  const u = req.user || {};
 
-// Registro público
-router.post('/register', userController.registerUser);
+  const isAdmin =
+    u.admin === true ||
+    u.role === 'admin' ||
+    (u.customClaims && (u.customClaims.admin === true || u.customClaims.role === 'admin'));
 
-// Usuários pendentes (admin)
-router.get('/admin/pending', authMiddleware, isAdmin, userController.getPendingUsers);
-router.get('/pending', authMiddleware, isAdmin, userController.getPendingUsers);
+  return res.json({
+    uid: u.uid,
+    email: u.email || null,
+    name: u.name || u.displayName || null,
+    admin: !!isAdmin
+  });
+});
 
-// Aprovação de usuário (admin)
-router.put('/admin/approve/:id', authMiddleware, isAdmin, userController.approveUser);
+// Exemplo de rota que aceita qualquer coisa depois de /me, SE realmente precisar:
+// router.get('/me/:rest*', verifyBearer, (req, res) => { ... });
 
 module.exports = router;

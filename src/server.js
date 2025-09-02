@@ -1,4 +1,3 @@
-// src/server.js
 require('dotenv').config();
 
 const express     = require('express');
@@ -77,7 +76,6 @@ const limiter = rateLimit({ windowMs: 60 * 1000, max: 1200 });
 app.use('/api/', limiter);
 
 /* ======================== Montagem tolerante de rotas ===================== */
-// Usa require.resolve para respeitar a resolução do Node (sem depender de .js explícito)
 function tryMount(prefix, relPathFromSrc) {
   try {
     const full = require.resolve(path.join(__dirname, relPathFromSrc));
@@ -96,26 +94,26 @@ tryMount('/api/reports',    './api/reportsRoutes');
 tryMount('/api/aliases',    './api/aliasesRoutes');
 tryMount('/api/analytics',  './api/analyticsRoutes');
 tryMount('/api/emails',     './api/emailsRoutes');
-tryMount('/api/users',      './api/userRoutes');       // alvo principal
+tryMount('/api/users',      './api/userRoutes');    // Arquivo acima, agora sem '/me*'
 tryMount('/api/clients',    './api/clientRoutes');
 tryMount('/api/embarcador', './api/embarcadorRoutes');
 
-/* =================== Fallback embutido: /api/users/me =================== */
-// Mesmo que userRoutes não monte, essa rota passa a existir.
+/* ====== Fallback mínimo de /api/users/me (sem wildcard) — seguro ====== */
 async function verifyBearer(req, res, next) {
   try {
     const auth = req.headers.authorization || '';
     const idToken = auth.startsWith('Bearer ') ? auth.slice(7) : null;
     if (!idToken) return res.status(401).json({ message: 'Não autorizado: Token não fornecido.' });
+
     const decoded = await admin.auth().verifyIdToken(idToken);
     req.user = decoded;
     next();
   } catch (e) {
-    return res.status(401).json({ message: 'Não autorizado: Token inválido.', detail: e.message });
+    res.status(401).json({ message: 'Não autorizado: Token inválido.', detail: e.message });
   }
 }
 
-app.get(['/api/users/me', '/api/users/me*'], verifyBearer, (req, res) => {
+app.get('/api/users/me', verifyBearer, (req, res) => {
   const u = req.user || {};
   const isAdmin =
     u.admin === true ||
@@ -160,8 +158,8 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Erro interno' });
 });
 
-process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));
-process.on('uncaughtException',  (err)    => console.error('[uncaughtException]',  err));
+process.on('unhandledRejection', (r) => console.error('[unhandledRejection]', r));
+process.on('uncaughtException',  (e) => console.error('[uncaughtException]',  e));
 
 /* ================================== Start ================================ */
 const PORT = process.env.PORT || 10000;

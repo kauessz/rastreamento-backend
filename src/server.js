@@ -7,123 +7,116 @@ const morgan      = require('morgan');
 const compression = require('compression');
 const rateLimit   = require('express-rate-limit');
 const cors        = require('cors');
+const fs          = require('fs');
+const path        = require('path');
 const admin       = require('firebase-admin');
 
-// ============ Firebase Admin (token do mesmo projeto do front!) ============
+const app = express();
+
+// ================================= Firebase Admin =================================
 (function initFirebaseAdmin() {
   try {
-    // Suporta tanto FIREBASE_SERVICE_ACCOUNT (JSON inteiro)
-    // quanto as variáveis separadas (PROJECT_ID, CLIENT_EMAIL, PRIVATE_KEY)
-    let cred;
+    if (admin.apps.length) return;
 
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-      const json = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-      cred = admin.credential.cert(json);
-    } else {
-      const projectId  = process.env.FIREBASE_PROJECT_ID;
-      const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-      // Render/Netlify guardam \n escapado — corrigimos:
-      const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-
-      if (!projectId || !clientEmail || !privateKey) {
-        console.warn('[auth] Variáveis do Firebase incompletas.');
-      }
-      cred = admin.credential.cert({ projectId, clientEmail, privateKey });
+    const svcJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+    if (svcJson) {
+      const creds = JSON.parse(svcJson);
+      admin.initializeApp({
+        credential: admin.credential.cert(creds)
+      });
+      console.log('[auth] Firebase Admin inicializado (JSON).');
+      return;
     }
 
-    admin.initializeApp({ credential: cred });
-    console.log('[auth] Firebase Admin inicializado.');
-  } catch (err) {
-    console.error('[auth] Falha ao iniciar Firebase Admin:', err);
+    const PROJECT_ID   = process.env.FIREBASE_PROJECT_ID;
+    const CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL;
+    let PRIVATE_KEY    = process.env.FIREBASE_PRIVATE_KEY;
+
+    if (PRIVATE_KEY && PRIVATE_KEY.includes('\\n')) {
+      PRIVATE_KEY = PRIVATE_KEY.replace(/\\n/g, '\n');
+    }
+
+    if (PROJECT_ID && CLIENT_EMAIL && PRIVATE_KEY) {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: PROJECT_ID,
+          clientEmail: CLIENT_EMAIL,
+          privateKey: PRIVATE_KEY
+        })
+      });
+      console.log('[auth] Firebase Admin inicializado (variáveis separadas).');
+    } else {
+      console.warn('[auth] Firebase Admin NÃO inicializado: credenciais ausentes.');
+    }
+  } catch (e) {
+    console.error('[auth] Erro ao inicializar Firebase Admin:', e);
   }
 })();
 
-// ============================ App / Middleware =============================
-const app = express();
-app.set('trust proxy', 1);
+// ================================= Middlewares base ===============================
+app.set('trust proxy', true);
 
-app.use(helmet());
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true); // ferramentas internas/health
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS bloqueado: ${origin}`));
+  },
+  credentials: true
+}));
+
+app.use(helmet({
+  contentSecurityPolicy: false // desliga CSP por segurança até configurarmos fontes/scripts
+}));
 app.use(compression());
-app.use(morgan('tiny'));
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true }));
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 1200
+});
+app.use('/api/', limiter);
 
-// Rate-limit simples (ajuste se precisar)
-app.use(
-  rateLimit({
-    windowMs: 60 * 1000,
-    limit: 300,
-    standardHeaders: 'draft-7',
-    legacyHeaders: false
-  })
-);
-
-// =============================== CORS (fix) ================================
-// IMPORTANTE: nada de app.options('*', …) no Express 5.
-// Usamos cors() com origin dinâmico + resposta manual para OPTIONS.
-const allowedOrigins = [
-  process.env.FRONT_ORIGIN,                 // ex.: https://tracking-r.netlify.app
-  'http://localhost:5500',
-  'http://127.0.0.1:5500'
-].filter(Boolean);
-
-function originOk(origin) {
-  if (!origin) return true; // chamadas server-to-server
-  if (allowedOrigins.includes(origin)) return true;
+// ============================= Montagem tolerante de rotas ========================
+function tryMount(prefix, fileRelPath) {
   try {
-    const { hostname } = new URL(origin);
-    // libera “*.netlify.app” e “*.onrender.com” por comodidade
-    if (hostname.endsWith('.netlify.app')) return true;
-    if (hostname.endsWith('.onrender.com')) return true;
-  } catch {}
-  return false;
+    const full = path.join(__dirname, fileRelPath);
+    if (fs.existsSync(full)) {
+      // eslint-disable-next-line import/no-dynamic-require, global-require
+      const router = require(full);
+      app.use(prefix, router);
+      console.log(`[routes] Mounted ${prefix} -> ${fileRelPath}`);
+    } else {
+      console.warn(`[routes] SKIP ${prefix}: arquivo não encontrado (${fileRelPath})`);
+    }
+  } catch (e) {
+    console.error(`[routes] Falha ao montar ${prefix} (${fileRelPath}):`, e.message);
+  }
 }
 
-app.use(
-  cors({
-    origin: (origin, cb) => cb(null, originOk(origin)),
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-  })
-);
+// Monte SOMENTE o que existir no seu src/
+tryMount('/api/operations', './api/operationRoutes');    // lista/paginação de operações
+tryMount('/api/dashboard',  './api/dashboardRoutes');    // KPIs do dashboard (se tiver)
+tryMount('/api/reports',    './api/reportsRoutes');      // geração de relatórios
+tryMount('/api/aliases',    './api/aliasesRoutes');      // gerenciador de apelidos
+tryMount('/api/analytics',  './api/analyticsRoutes');    // KPIs/diário do período
+tryMount('/api/emails',     './api/emailsRoutes');       // envio de e-mail diário
+tryMount('/api/users',      './api/userRoutes');         // usuários (se existir)
+tryMount('/api/clients',    './api/clientRoutes');       // clientes (se existir)
+tryMount('/api/embarcador', './api/embarcadorRoutes');   // embarcadores (se existir)
 
-// Resposta curta às preflights sem usar app.options('*', …)
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
-  next();
-});
-
-// ================================ Rotas ====================================
-// Middlewares e rotas do projeto
-const userRoutes        = require('./api/userRoutes');
-const operationRoutes   = require('./api/operationRoutes');
-const embarcadorRoutes  = require('./api/embarcadorRoutes');
-const clientRoutes      = require('./api/clientRoutes');
-const dashboardRoutes   = require('./api/dashboardRoutes');
-const reportsRoutes     = require('./api/reportsRoutes');
-
-// Montagem
-app.use('/api/users',        userRoutes);
-app.use('/api/operations',   operationRoutes);
-app.use('/api/embarcadores', embarcadorRoutes);
-app.use('/api/client',       clientRoutes);
-app.use('/api/dashboard',    dashboardRoutes);
-app.use('/api/reports',      reportsRoutes);
-app.use('/api/aliases', require('./api/aliasesRoutes'));
-app.use('/api/analytics', require('./api/analyticsRoutes'));
-app.use('/api/emails', require('./api/emailsRoutes'));
-
-
-
-// ====================== Webhook Dialogflow (Messenger) =====================
-// Se você usa o Dialogflow Messenger (iframe) no front, esse webhook
-// recebe intents e devolve respostas simples (ajuste à sua lógica).
-app.post('/api/dialogflow/webhook', async (req, res) => {
+// ============================ Webhook simples do Assistente ========================
+app.post('/api/df/webhook', async (req, res) => {
   try {
-    const query = req.body?.queryResult?.queryText || '';
-    // Exemplo mínimo — aqui você pode chamar seu banco, etc.
+    const query = (req.body?.queryResult?.queryText || req.body?.query || '').trim();
+
     const fulfillmentText = query
       ? `Entendi sua pergunta: "${query}". Vou buscar os dados e te retorno!`
       : 'Oi! Como posso ajudar no rastreamento?';
@@ -135,11 +128,25 @@ app.post('/api/dialogflow/webhook', async (req, res) => {
   }
 });
 
-// ================================ Health ===================================
+// ================================= Health / Root ==================================
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.get('/', (_req, res) => res.send('API de Rastreamento ativa ✅'));
 
-// ================================ Start ====================================
+// ================================= Error Handler ==================================
+app.use((err, _req, res, _next) => {
+  console.error('[error]', err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: 'Erro interno' });
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
+
+// ================================== Start =========================================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`API up on :${PORT}`));
 

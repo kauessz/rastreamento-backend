@@ -5,12 +5,9 @@ const nodemailer = require('nodemailer');
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: Number(process.env.SMTP_PORT || 587),
-  secure: String(process.env.SMTP_SECURE || 'false') === 'true', // true para 465
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
-  },
-  tls: { rejectUnauthorized: false } // útil em ambientes com cert autoassinado
+  secure: String(process.env.SMTP_SECURE || 'false') === 'true',
+  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  tls: { rejectUnauthorized: false }
 });
 
 const atrasoMinExpr = `
@@ -29,7 +26,6 @@ exports.sendDailyDelaysEmail = async (req, res) => {
     const date = req.body.date || new Date().toISOString().slice(0,10);
     const companyId = req.body.companyId ? Number(req.body.companyId) : null;
 
-    // 1) Busca atrasos do dia
     const sql = `
       SELECT
         COALESCE(o.nome_embarcador, o.embarcador, 'Sem cliente') AS cliente,
@@ -39,14 +35,14 @@ exports.sendDailyDelaysEmail = async (req, res) => {
         COALESCE(o.motivo_atraso, o.motivo_do_atraso, o.motivo) AS motivo_atraso,
         ${atrasoMinExpr} AS atraso_min
       FROM operacoes o
-      WHERE DATE(o.previsao_inicio_atendimento) = $1
+      WHERE o.previsao_inicio_atendimento >= $1::date
+        AND o.previsao_inicio_atendimento <  ($1::date + INTERVAL '1 day')
         AND (${atrasoMinExpr} > 0)
         AND ($2::int IS NULL OR o.company_id = $2)
       ORDER BY cliente ASC, o.previsao_inicio_atendimento ASC;
     `;
     const { rows } = await db.query(sql, [date, companyId]);
 
-    // 2) Monta HTML simples
     const linhas = rows.map(r => `
       <tr>
         <td>${escapeHtml(r.cliente)}</td>
@@ -79,11 +75,8 @@ exports.sendDailyDelaysEmail = async (req, res) => {
       </div>
     `;
 
-    // 3) Destinatários
     let toList = Array.isArray(req.body.to) ? req.body.to : null;
     if (!toList || !toList.length) {
-      // Exemplo de busca de destinatários por cliente/empresa (ajuste à sua tabela real)
-      // Supondo uma tabela "destinatarios_clientes (email, ativo, company_id)".
       const q = `
         SELECT DISTINCT email
         FROM destinatarios_clientes
@@ -98,7 +91,6 @@ exports.sendDailyDelaysEmail = async (req, res) => {
       return res.status(400).json({ error: 'Nenhum destinatário encontrado (ou forneça "to" no body).' });
     }
 
-    // 4) Envia
     const info = await transporter.sendMail({
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
       to: toList.join(','),

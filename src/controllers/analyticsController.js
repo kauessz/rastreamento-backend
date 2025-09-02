@@ -43,7 +43,8 @@ exports.getDailyDelays = async (req, res) => {
         COALESCE(o.placa_carreta, o.carreta_placa, o.placa_reboque) AS placa_carreta,
         COALESCE(o.status_operacao, o.status) AS status_operacao
       FROM operacoes o
-      WHERE DATE(o.previsao_inicio_atendimento) = $1
+      WHERE o.previsao_inicio_atendimento >= $1::date
+        AND o.previsao_inicio_atendimento <  ($1::date + INTERVAL '1 day')
         AND ($2::int IS NULL OR o.company_id = $2)
       ORDER BY o.previsao_inicio_atendimento ASC, o.booking ASC
     `;
@@ -78,7 +79,8 @@ exports.getDailyReasons = async (req, res) => {
       SELECT COALESCE(o.motivo_atraso, o.motivo_do_atraso, o.motivo, 'Sem motivo') AS motivo,
              COUNT(*) AS qtd
       FROM operacoes o
-      WHERE DATE(o.previsao_inicio_atendimento) = $1
+      WHERE o.previsao_inicio_atendimento >= $1::date
+        AND o.previsao_inicio_atendimento <  ($1::date + INTERVAL '1 day')
         AND (${atrasoMinExpr} > 0)
         AND ($2::int IS NULL OR o.company_id = $2)
       GROUP BY 1
@@ -117,7 +119,8 @@ exports.getKpisRange = async (req, res) => {
       WITH base AS (
         SELECT ${atrasoMinExpr} AS atraso_min
         FROM operacoes o
-        WHERE DATE(o.previsao_inicio_atendimento) BETWEEN $1 AND $2
+        WHERE o.previsao_inicio_atendimento >= $1::date
+          AND o.previsao_inicio_atendimento <  ($2::date + INTERVAL '1 day')
           AND ($3::int IS NULL OR o.company_id = $3)
       )
       SELECT
@@ -136,7 +139,8 @@ exports.getKpisRange = async (req, res) => {
       SELECT COALESCE(o.motivo_atraso, o.motivo_do_atraso, o.motivo, 'Sem motivo') AS motivo,
              COUNT(*)::int AS qtd
       FROM operacoes o
-      WHERE DATE(o.previsao_inicio_atendimento) BETWEEN $1 AND $2
+      WHERE o.previsao_inicio_atendimento >= $1::date
+        AND o.previsao_inicio_atendimento <  ($2::date + INTERVAL '1 day')
         AND (${atrasoMinExpr} > 0)
         AND ($3::int IS NULL OR o.company_id = $3)
       GROUP BY 1
@@ -150,7 +154,8 @@ exports.getKpisRange = async (req, res) => {
       SELECT COALESCE(o.nome_embarcador, o.embarcador, 'Sem cliente') AS cliente,
              COUNT(*)::int AS qtd
       FROM operacoes o
-      WHERE DATE(o.previsao_inicio_atendimento) BETWEEN $1 AND $2
+      WHERE o.previsao_inicio_atendimento >= $1::date
+        AND o.previsao_inicio_atendimento <  ($2::date + INTERVAL '1 day')
         AND (${atrasoMinExpr} > 0)
         AND ($3::int IS NULL OR o.company_id = $3)
       GROUP BY 1

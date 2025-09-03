@@ -1,206 +1,192 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - Rastreamento de Carga</title>
-    <link rel="stylesheet" href="css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        /* Tema claro/escuro do Messenger alinhado ao site */
-        .btn {
-            padding: 8px 12px;
-            border-radius: 8px;
-            border: 1px solid #d0d7de;
-            background: #f6f8fa;
-            cursor: pointer
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dashboard Admin</title>
+  <link rel="stylesheet" href="css/style.css"/>
 
-        body.dark-mode .btn {
-            background: #0b1220;
-            border-color: #1f2937;
-            color: #e5e7eb
-        }
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
-        .btn:hover {
-            filter: brightness(0.98);
-        }
-    </style>
+  <!-- Firebase (mantém igual ao seu projeto) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="js/firebase-init.js"></script>
 </head>
+<body class="body light-mode">
+<header class="topbar">
+  <div class="brand">Dashboard <b>Admin</b></div>
+  <nav class="right-actions">
+    <a class="button" href="admin-reports.html">Relatórios</a>
+    <span id="userEmail" class="user-pill">Olá</span>
+    <button id="logoutBtn" class="button-danger">Sair</button>
+  </nav>
+</header>
 
-<body>
-    <header>
-        <div class="logo">Dashboard Admin</div>
-        <div class="header-right">
-            <button id="navReports" class="btn btn-outline">Relatórios</button>
-            <div class="user-profile">
-                <span class="user-profile-icon">👤</span>
-                <span id="userEmail"></span>
-            </div>
-            <div class="theme-switch-wrapper">
-                <label class="theme-switch" for="checkbox">
-                    <input type="checkbox" id="checkbox" />
-                    <div class="slider round"></div>
-                </label>
-            </div>
-            <button id="logoutButton" class="button-logout">Sair</button>
-        </div>
-    </header>
+<main class="dashboard-container">
 
-    <main class="dashboard-container">
+  <!-- Linha 1: Upload + Usuários pendentes -->
+  <section class="dashboard-section">
+    <div class="card">
+      <h3>Upload de Planilha</h3>
+      <input type="file" id="uploadFile" />
+      <div style="margin-top:.5rem">
+        <button id="sendUpload" class="button">Enviar</button>
+      </div>
+      <div style="margin-top:1rem">
+        <button id="clearOps" class="button-danger">Limpar Todas as Operações</button>
+      </div>
+      <p id="uploadMsg" class="muted"></p>
+    </div>
 
-        <section class="dashboard-section">
-            <div class="management-container">
-                <div class="management-box">
-                    <h3>Upload de Planilha</h3>
-                    <form id="uploadForm" class="filters">
-                        <input type="file" id="fileInput" required>
-                        <button type="submit">Enviar</button>
-                    </form>
-                    <p id="uploadMessage"></p>
-                    <hr style="margin: 20px 0;"> <button id="clearOperationsButton" class="button-danger">Limpar Todas
-                        as Operações</button>
-                </div>
-                <div class="management-box">
-                    <h3>Usuários Pendentes</h3>
-                    <div id="pendingUsersList"></div>
-                </div>
-            </div>
-        </section>
+    <div class="card">
+      <h3>Usuários Pendentes</h3>
+      <div id="pendingUsers" class="muted">—</div>
+    </div>
+  </section>
 
+  <!-- Linha 2: Gerenciador de Apelidos -->
+  <section class="dashboard-section">
+    <div class="card" style="width:100%">
+      <h3>Gerenciador de Apelidos de Embarcadores</h3>
+      <p class="muted">
+        Use para garantir que variações de nomes (ex.: “Ambev S.A.”) sejam associadas ao cliente mestre correto (ex.: “AMBEV”).
+      </p>
 
-        <section class="dashboard-section">
-            <h2>Gerenciador de Apelidos de Embarcadores</h2>
-            <p>Use esta ferramenta para garantir que variações de nomes (ex: "Ambev S.A.") sejam associadas ao cliente
-                mestre correto (ex: "AMBEV").</p>
-            <div class="table-wrapper">
-                <table id="aliasesTable" class="operations-table">
-                    <thead>
-                        <tr>
-                            <th>Nome "Sujo" (Apelido)</th>
-                            <th>Associado ao Mestre</th>
-                            <th>Reassociar Para</th>
-                            <th>Ações</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    </tbody>
-                </table>
-            </div>
-        </section>
+      <div class="aliases-actions">
+        <input id="aliasDirty" type="text" placeholder="Nome 'sujo' (apelido)" />
+        <input id="aliasMaster" type="text" placeholder="Associar ao Mestre (ex.: AMBEV)"/>
+        <button id="aliasSave" class="button">Salvar / Atualizar</button>
+      </div>
 
-        <section class="dashboard-section">
-            <h2>Filtros de Operações</h2>
-            <div class="filters" id="globalFilters">
-                <select id="embarcadorFilter">
-                    <option value="">Todos Embarcadores</option>
-                </select>
-                <input type="text" id="bookingFilter" placeholder="Filtrar por Booking...">
-                <input type="date" id="dataPrevisaoFilter" title="Filtrar por data de previsão">
-                <button id="filterButton">Filtrar</button>
-                <button id="clearFilterButton" class="button-secondary">Limpar Filtros</button>
-            </div>
-        </section>
+      <table class="table" id="aliasesTable">
+        <thead>
+          <tr>
+            <th>Nome "Sujo" (Apelido)</th>
+            <th>Associado ao Mestre</th>
+            <th style="width:120px">Ações</th>
+          </tr>
+        </thead>
+        <tbody id="aliasesTbody">
+          <tr><td colspan="3" class="muted">Carregando…</td></tr>
+        </tbody>
+      </table>
+      <p id="aliasesMsg" class="muted"></p>
+    </div>
+  </section>
 
-        <section class="dashboard-section">
-            <h2>Visão Geral das Operações</h2>
-            <div class="kpi-container">
-                <div class="kpi-card" id="kpi-total" data-filter="total">
-                    <span class="kpi-value">0</span>
-                    <span class="kpi-label">Total de Operações</span>
-                </div>
-                <div class="kpi-card" id="kpi-ontime" data-filter="on_time">
-                    <span class="kpi-value">0</span>
-                    <span class="kpi-label">On Time</span>
-                </div>
-                <div class="kpi-card" id="kpi-atrasadas" data-filter="atrasadas">
-                    <span class="kpi-value">0</span>
-                    <span class="kpi-label">Atrasadas</span>
-                </div>
-                <div class="kpi-card" id="kpi-percentual">
-                    <span class="kpi-value">0%</span>
-                    <span class="kpi-label">% de Atraso</span>
-                </div>
-            </div>
-            <div class="charts-wrapper">
-                <div class="chart-container">
-                    <h3>Top 10 Ofensores de Atraso</h3>
-                    <canvas id="ofensoresChart"></canvas>
-                </div>
-                <div class="chart-container">
-                    <h3>Top 10 Clientes com Atraso</h3>
-                    <canvas id="clientesChart"></canvas>
-                </div>
-            </div>
+  <!-- Linha 3: Filtros -->
+  <section class="dashboard-section">
+    <div class="card" style="width:100%">
+      <h3>Filtros de Operações</h3>
+      <div class="filters" id="globalFilters">
+        <select id="embarcadorFilter" title="Filtrar por Embarcador">
+          <option value="">Todos Embarcadores</option>
+        </select>
 
-        </section>
-        <!-- Barra de Relatórios (Admin) -->
-        <div class="report-bar" style="display:flex; gap:.5rem; align-items:center; margin:12px 0;">
-            <label>Período:</label>
-            <input type="date" id="repStart" />
-            <input type="date" id="repEnd" />
-            <button id="btnExcelTop" class="btn">Top 10 (Excel)</button>
-            <button id="btnExcelAtrasos" class="btn">Resumo de Atrasos (Excel)</button>
-        </div>
+        <input type="text" id="bookingFilter" placeholder="Booking"/>
+        <input type="text" id="containerFilter" placeholder="Contêiner"/>
 
-        <section class="dashboard-section">
-            <h2>Lista de Operações</h2>
-            <div class="table-wrapper">
-                <table id="operationsTable" class="operations-table">
-                    <thead>
-                        <tr>
-                            <th data-sort="booking">Booking</th>
-                            <th data-sort="containers">Contêiner</th>
-                            <th data-sort="nome_embarcador">Embarcador</th>
-                            <th data-sort="porto">Porto</th>
-                            <th data-sort="previsao_inicio_atendimento">Previsão Atendimento</th>
-                            <th>Início da Execução</th>
-                            <th>Fim da Execução</th>
-                            <th>Atraso (HH:MM)</th>
-                            <th>Motivo do Atraso</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-            <div id="paginationControls"></div>
-        </section>
-    </main>
+        <input type="date" id="startDateFilter" title="Início"/>
+        <input type="date" id="endDateFilter" title="Fim"/>
 
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-    <script src="js/firebase-init.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
-    <script src="js/dashboard.js"></script>
-    <!-- Chat do Assistente (Dialogflow Messenger) -->
-    <df-messenger chat-icon="https://fonts.gstatic.com/s/i/materialiconsoutlined/smart_toy/v12/24px.svg"
-        chat-title="Assistente de Rastreamento" agent-id="e2079c6f-de5e-4822-990f-011b81ffacaf" language-code="pt-br"
-        expand="false">
-    </df-messenger>
+        <button id="filterButton" class="button">Filtrar</button>
+        <button id="clearFilterButton" class="button-secondary">Limpar Filtros</button>
+      </div>
+    </div>
+  </section>
 
-    <script>
-        (function attachSessionId() {
-            const df = document.querySelector('df-messenger');
-            const trySet = () => {
-                const el = document.getElementById('userEmail');
-                const email = el && el.textContent ? el.textContent : null;
-                if (email && df && !df.getAttribute('session-id')) {
-                    // admin: companyId = 0
-                    df.setAttribute('session-id', `admin:0:${email}`);
-                } else {
-                    setTimeout(trySet, 1000);
-                }
-            };
-            trySet();
-        })();
+  <!-- Linha 4: KPIs -->
+  <section class="dashboard-section">
+    <div class="kpis">
+      <div class="kpi-card clickable" id="kpiTotal">
+        <div class="kpi-value" id="kpiTotalValue">0</div>
+        <div class="kpi-label">Total de Operações</div>
+      </div>
 
-        window.openAssistant = function () {
-            const df = document.querySelector('df-messenger');
-            if (df) df.setAttribute('expanded', 'true');
-        };
-    </script>
+      <div class="kpi-card clickable" id="kpiOnTime">
+        <div class="kpi-value" id="kpiOnTimeValue">0</div>
+        <div class="kpi-label">On Time</div>
+      </div>
 
+      <div class="kpi-card clickable" id="kpiLate">
+        <div class="kpi-value" id="kpiLateValue">0</div>
+        <div class="kpi-label">Atrasadas</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-value" id="kpiLatePct">0%</div>
+        <div class="kpi-label">% de Atraso</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Linha 5: Gráficos -->
+  <section class="dashboard-section">
+    <div class="card" style="min-height:320px">
+      <h4>Top 10 Ofensores de Atraso</h4>
+      <div class="chart-holder">
+        <canvas id="topOffendersChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card" style="min-height:320px">
+      <h4>Top 10 Clientes com Atraso</h4>
+      <div class="chart-holder">
+        <canvas id="topClientsChart"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- Linha 6: Lista de Operações -->
+  <section class="dashboard-section">
+    <div class="card" style="width:100%">
+      <h3>Lista de Operações</h3>
+
+      <table class="table" id="opsTable">
+        <thead>
+        <tr>
+          <th>Booking</th>
+          <th>Contêiner</th>
+          <th>Embarcador</th>
+          <th>Porto</th>
+          <th>Previsão Atendimento</th>
+          <th>Início da Execução</th>
+          <th>Fim da Execução</th>
+          <th>Atraso (HH:MM)</th>
+          <th>Motivo do Atraso</th>
+        </tr>
+        </thead>
+        <tbody id="opsTbody"><tr><td colspan="9" class="muted">Carregando…</td></tr></tbody>
+      </table>
+
+      <div class="table-footer">
+        <button id="prevPage" class="button-secondary">&larr; Anterior</button>
+        <span id="pageInfo" class="muted">—</span>
+        <button id="nextPage" class="button-secondary">Próxima &rarr;</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Modal genérico (reutilizado para On Time / Atrasadas) -->
+<div id="modal" class="modal hidden" aria-hidden="true">
+  <div class="modal-backdrop" id="modalBackdrop"></div>
+  <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-header">
+      <h4 id="modalTitle">Lista</h4>
+      <button id="modalClose" class="button-secondary">Fechar</button>
+    </div>
+    <div class="modal-body" id="modalBody">Carregando…</div>
+  </div>
+</div>
+
+<!-- *** IMPORTANTE: base da API (Render). Ajuste se mudar o domínio do backend. *** -->
+<script>
+  window.API_BASE = 'https://rastreamento-backend-05pi.onrender.com/api';
+</script>
+
+<script src="js/dashboard.js"></script>
 </body>
-
 </html>

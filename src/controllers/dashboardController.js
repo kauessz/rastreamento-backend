@@ -1,6 +1,21 @@
+// src/controllers/dashboardController.js
 const db = require('../config/database');
 
-// Converte filtros do front p/ WHERE/params
+/** Cache leve p/ saber se existe a tabela embarcadores */
+let hasEmbarcadoresCache = null;
+async function hasEmbarcadores() {
+  if (hasEmbarcadoresCache !== null) return hasEmbarcadoresCache;
+  try {
+    const q = await db.query(`SELECT to_regclass('public.embarcadores') AS reg`);
+    hasEmbarcadoresCache = !!(q.rows[0] && q.rows[0].reg);
+  } catch (e) {
+    console.error('hasEmbarcadores check error:', e);
+    hasEmbarcadoresCache = false;
+  }
+  return hasEmbarcadoresCache;
+}
+
+/** WHERE/params a partir dos filtros do front */
 function buildWhereAndParams(q = {}) {
   const { companyId, booking, start, end } = q;
   const clauses = [];
@@ -15,23 +30,20 @@ function buildWhereAndParams(q = {}) {
   return { where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
 }
 
-// KPIs + dados dos gráficos (formato que o front espera)
+/** KPIs + gráficos (formato plano esperado pelo front) */
 exports.getKpis = async (req, res) => {
   try {
     const { where, params } = buildWhereAndParams(req.query);
+    const embOK = await hasEmbarcadores();
+    const clientExpr = embOK ? `COALESCE(emb.nome, op.nome_embarcador)` : `op.nome_embarcador`;
+    const joinEmb    = embOK ? `LEFT JOIN embarcadores emb ON emb.id = op.embarcador_id` : ``;
 
-    // “Atraso” prioriza tempo_atraso; senão compara início vs previsão
+    // Regra de atraso resiliente:
+    // 1) tempo_atraso > 0
+    // 2) OU "Situação prazo programação" indicando atraso (texto)
     const atrasoCond = `
-      (op.tempo_atraso IS NOT NULL AND op.tempo_atraso > 0)
-      OR (
-        (op.tempo_atraso IS NULL OR op.tempo_atraso = 0)
-        AND (
-          (op.dt_inicio_execucao IS NOT NULL AND op.previsao_inicio_atendimento IS NOT NULL
-            AND op.dt_inicio_execucao > op.previsao_inicio_atendimento)
-          OR (op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento IS NOT NULL
-            AND op.previsao_inicio_atendimento < NOW())
-        )
-      )
+      (COALESCE(op.tempo_atraso, 0) > 0)
+      OR (COALESCE(op.situacao_prazo_programacao, '') ILIKE '%atras%')
     `;
 
     const totalQ = await db.query(`SELECT COUNT(*) FROM operacoes op ${where}`, params);
@@ -46,28 +58,25 @@ exports.getKpis = async (req, res) => {
     const onTime = Math.max(total - late, 0);
     const latePct = total > 0 ? Number(((late / total) * 100).toFixed(2)) : 0;
 
-    // Top ofensores por justificativa/motivo
+    // Principais justificativas/motivos (ambos do CSV)
     const offQ = await db.query(
       `SELECT COALESCE(NULLIF(op.justificativa_atraso, ''), op.motivo_atraso) AS reason,
               COUNT(*)::int AS count
        FROM operacoes op
-       ${where ? where + ' AND ' : 'WHERE '}
-       ${atrasoCond}
+       ${where ? where + ' AND ' : 'WHERE '} (${atrasoCond})
        GROUP BY COALESCE(NULLIF(op.justificativa_atraso, ''), op.motivo_atraso)
        ORDER BY count DESC
        LIMIT 10`,
       params
     );
 
-    // Top clientes com atraso (usa COALESCE do FK com texto livre)
+    // Clientes com mais atrasos
     const cliQ = await db.query(
-      `SELECT COALESCE(emb.nome, op.nome_embarcador) AS client,
-              COUNT(op.id)::int AS count
+      `SELECT ${clientExpr} AS client, COUNT(op.id)::int AS count
        FROM operacoes op
-       LEFT JOIN embarcadores emb ON emb.id = op.embarcador_id
-       ${where ? where + ' AND ' : 'WHERE '}
-       ${atrasoCond}
-       GROUP BY COALESCE(emb.nome, op.nome_embarcador)
+       ${joinEmb}
+       ${where ? where + ' AND ' : 'WHERE '} (${atrasoCond})
+       GROUP BY ${clientExpr}
        ORDER BY count DESC
        LIMIT 10`,
       params
@@ -79,7 +88,7 @@ exports.getKpis = async (req, res) => {
       late,
       latePct,
       topOffenders: offQ.rows.map(r => ({ reason: r.reason || 'Sem justificativa', count: r.count })),
-      topClients:   cliQ.rows.map(r => ({ client: r.client || 'Sem cliente',    count: r.count })),
+      topClients:   cliQ.rows.map(r => ({ client: r.client || 'Sem cliente', count: r.count })),
     });
   } catch (e) {
     console.error('getKpis error:', e);
@@ -87,52 +96,51 @@ exports.getKpis = async (req, res) => {
   }
 };
 
-// Lista embarcadores para o filtro
+/** Embarcadores p/ o filtro (usa tabela se existir; senão DISTINCT do CSV) */
 exports.getCompanies = async (_req, res) => {
   try {
-    const { rows: emb } = await db.query(
-      `SELECT id, nome AS name FROM embarcadores ORDER BY nome ASC`
-    );
-    if (emb.length) return res.json(emb);
+    const embOK = await hasEmbarcadores();
 
-    const { rows: distinctOps } = await db.query(
+    if (embOK) {
+      const { rows } = await db.query(`SELECT id, nome AS name FROM embarcadores ORDER BY nome ASC`);
+      if (rows.length) return res.json(rows);
+    }
+
+    const { rows: opRows } = await db.query(
       `SELECT DISTINCT nome_embarcador AS name
-         FROM operacoes
-        WHERE nome_embarcador IS NOT NULL AND nome_embarcador <> ''
-        ORDER BY nome_embarcador ASC`
+       FROM operacoes
+       WHERE nome_embarcador IS NOT NULL AND nome_embarcador <> ''
+       ORDER BY nome_embarcador ASC`
     );
-    return res.json(distinctOps.map((r, i) => ({ id: -1*(i+1), name: r.name })));
+    return res.json(opRows.map((r, i) => ({ id: -1 * (i + 1), name: r.name })));
   } catch (e) {
     console.error('getCompanies error:', e);
     res.status(500).json({ message: 'Erro interno do servidor.' });
   }
 };
 
-// Lista de operações (campos que o front rende)
+/** Lista de operações (sem to_char — datas como texto; atraso via tempo_atraso/HH:MM prontos) */
 exports.getOperations = async (req, res) => {
   try {
     const { where, params } = buildWhereAndParams(req.query);
+    const embOK = await hasEmbarcadores();
+    const clientExpr = embOK ? `COALESCE(emb.nome, op.nome_embarcador)` : `op.nome_embarcador`;
+    const joinEmb    = embOK ? `LEFT JOIN embarcadores emb ON emb.id = op.embarcador_id` : ``;
 
     const { rows } = await db.query(
       `SELECT
          op.booking AS booking,
          op.containers AS container,
-         COALESCE(emb.nome, op.nome_embarcador) AS client,
+         ${clientExpr} AS client,
          op.porto AS port,
-         to_char(op.previsao_inicio_atendimento, 'YYYY-MM-DD HH24:MI') AS sla_previsao,
-         to_char(op.dt_inicio_execucao,        'YYYY-MM-DD HH24:MI') AS exec_inicio,
-         to_char(op.dt_fim_execucao,           'YYYY-MM-DD HH24:MI') AS exec_fim,
+         op.previsao_inicio_atendimento::text AS sla_previsao,
+         op.dt_inicio_execucao::text          AS exec_inicio,
+         op.dt_fim_execucao::text             AS exec_fim,
          COALESCE(
            NULLIF(op.atraso_hhmm, ''),
            CASE
-             WHEN op.tempo_atraso IS NOT NULL AND op.tempo_atraso > 0
+             WHEN COALESCE(op.tempo_atraso,0) > 0
                THEN lpad((op.tempo_atraso/60)::text, 2, '0') || ':' || lpad((op.tempo_atraso%60)::text, 2, '0')
-             WHEN op.dt_inicio_execucao IS NOT NULL AND op.previsao_inicio_atendimento IS NOT NULL
-                  AND op.dt_inicio_execucao > op.previsao_inicio_atendimento
-               THEN to_char((op.dt_inicio_execucao - op.previsao_inicio_atendimento), 'HH24:MI')
-             WHEN op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento IS NOT NULL
-                  AND op.previsao_inicio_atendimento < NOW()
-               THEN to_char((NOW() - op.previsao_inicio_atendimento), 'HH24:MI')
              ELSE '00:00'
            END
          ) AS atraso_hhmm,
@@ -146,7 +154,7 @@ exports.getOperations = async (req, res) => {
          op.placa_carreta,
          op.numero_cliente
        FROM operacoes op
-       LEFT JOIN embarcadores emb ON emb.id = op.embarcador_id
+       ${joinEmb}
        ${where}
        ORDER BY op.previsao_inicio_atendimento DESC NULLS LAST
        LIMIT 1000`,
@@ -160,5 +168,4 @@ exports.getOperations = async (req, res) => {
   }
 };
 
-// Placeholder
 exports.getPendingUsers = async (_req, res) => res.json([]);

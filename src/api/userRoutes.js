@@ -4,6 +4,32 @@ const admin = require('firebase-admin');
 
 const router = express.Router();
 
+function computeIsAdmin(decoded) {
+  const email = (decoded.email || '').toLowerCase();
+
+  const LIST = (process.env.ADMIN_EMAILS || '')
+    .toLowerCase()
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const DOMAINS = (process.env.ADMIN_DOMAINS || '')
+    .toLowerCase()
+    .split(',')
+    .map(s => s.trim().replace(/^@/, '')) // normaliza, aceita "@empresa.com" ou "empresa.com"
+    .filter(Boolean);
+
+  const viaClaim =
+    decoded.admin === true ||
+    decoded.role === 'admin' ||
+    decoded.is_admin === true;
+
+  const viaEmail  = LIST.includes(email);
+  const viaDomain = email && DOMAINS.some(d => email.endsWith(`@${d}`));
+
+  return Boolean(viaClaim || viaEmail || viaDomain);
+}
+
 async function verifyBearer(req, res, next) {
   try {
     const auth = req.headers.authorization || '';
@@ -18,27 +44,16 @@ async function verifyBearer(req, res, next) {
   }
 }
 
-/**
- * ATENÇÃO:
- * Nada de '/me*' ou '/me/*'. Use apenas '/me' (exato) ou a sintaxe nova '/me/:rest*' se precisar.
- */
 router.get('/me', verifyBearer, (req, res) => {
   const u = req.user || {};
-
-  const isAdmin =
-    u.admin === true ||
-    u.role === 'admin' ||
-    (u.customClaims && (u.customClaims.admin === true || u.customClaims.role === 'admin'));
+  const isAdmin = computeIsAdmin(u);
 
   return res.json({
     uid: u.uid,
     email: u.email || null,
     name: u.name || u.displayName || null,
-    admin: !!isAdmin
+    admin: isAdmin
   });
 });
-
-// Exemplo de rota que aceita qualquer coisa depois de /me, SE realmente precisar:
-// router.get('/me/:rest*', verifyBearer, (req, res) => { ... });
 
 module.exports = router;

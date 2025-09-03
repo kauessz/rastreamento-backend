@@ -94,11 +94,37 @@ tryMount('/api/reports',    './api/reportsRoutes');
 tryMount('/api/aliases',    './api/aliasesRoutes');
 tryMount('/api/analytics',  './api/analyticsRoutes');
 tryMount('/api/emails',     './api/emailsRoutes');
-tryMount('/api/users',      './api/userRoutes');    // Arquivo acima, agora sem '/me*'
+tryMount('/api/users',      './api/userRoutes');    // agora calcula admin com ENV
 tryMount('/api/clients',    './api/clientRoutes');
 tryMount('/api/embarcador', './api/embarcadorRoutes');
 
-/* ====== Fallback mínimo de /api/users/me (sem wildcard) — seguro ====== */
+/* ========== Fallback mínimo de /api/users/me (mesma regra de admin) ========== */
+function computeIsAdmin(decoded) {
+  const email = (decoded.email || '').toLowerCase();
+
+  const LIST = (process.env.ADMIN_EMAILS || '')
+    .toLowerCase()
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const DOMAINS = (process.env.ADMIN_DOMAINS || '')
+    .toLowerCase()
+    .split(',')
+    .map(s => s.trim().replace(/^@/, ''))
+    .filter(Boolean);
+
+  const viaClaim =
+    decoded.admin === true ||
+    decoded.role === 'admin' ||
+    decoded.is_admin === true;
+
+  const viaEmail  = LIST.includes(email);
+  const viaDomain = email && DOMAINS.some(d => email.endsWith(`@${d}`));
+
+  return Boolean(viaClaim || viaEmail || viaDomain);
+}
+
 async function verifyBearer(req, res, next) {
   try {
     const auth = req.headers.authorization || '';
@@ -115,16 +141,13 @@ async function verifyBearer(req, res, next) {
 
 app.get('/api/users/me', verifyBearer, (req, res) => {
   const u = req.user || {};
-  const isAdmin =
-    u.admin === true ||
-    u.role === 'admin' ||
-    (u.customClaims && (u.customClaims.admin === true || u.customClaims.role === 'admin'));
+  const isAdmin = computeIsAdmin(u);
 
   res.json({
     uid: u.uid,
     email: u.email || null,
     name: u.name || u.displayName || null,
-    admin: !!isAdmin
+    admin: isAdmin
   });
 });
 

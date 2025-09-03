@@ -7,28 +7,8 @@
     <title>Dashboard - Rastreamento de Carga</title>
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://www.gstatic.com/dialogflow-console/fast/messenger/bootstrap.js?v=1"></script>
     <style>
         /* Tema claro/escuro do Messenger alinhado ao site */
-        df-messenger {
-            --df-messenger-font-color: #101828;
-            --df-messenger-button-titlebar-color: #1f6feb;
-            --df-messenger-chat-background-color: #ffffff;
-            --df-messenger-bot-message: #eef2ff;
-            --df-messenger-user-message: #e7f5ff;
-            --df-messenger-send-icon: #1f6feb;
-            z-index: 9999;
-        }
-
-        body.dark-mode df-messenger {
-            --df-messenger-font-color: #e5e7eb;
-            --df-messenger-button-titlebar-color: #3b82f6;
-            --df-messenger-chat-background-color: #0b1220;
-            --df-messenger-bot-message: #0f172a;
-            --df-messenger-user-message: #111827;
-            --df-messenger-send-icon: #93c5fd;
-        }
-
         .btn {
             padding: 8px 12px;
             border-radius: 8px;
@@ -191,6 +171,7 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
     <script src="js/firebase-init.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
     <script src="js/dashboard.js"></script>
     <!-- Chat do Assistente (Dialogflow Messenger) -->
     <df-messenger chat-icon="https://fonts.gstatic.com/s/i/materialiconsoutlined/smart_toy/v12/24px.svg"

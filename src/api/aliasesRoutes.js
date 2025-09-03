@@ -1,8 +1,9 @@
+// src/api/aliasesRoutes.js
 const express = require('express');
 const router = express.Router();
-const { listAliases, upsertAlias, ensureTable } = require('../controllers/aliasesController');
+const { listAliases, upsertAlias, ensureTables } = require('../controllers/aliasesController');
 
-ensureTable().catch(console.error);
+ensureTables().catch(console.error);
 
 // GET /api/aliases
 router.get('/', async (req,res) => {

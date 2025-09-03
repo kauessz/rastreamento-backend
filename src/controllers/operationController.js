@@ -119,9 +119,9 @@ exports.uploadOperations = async (req, res) => {
                 numero_programacao, booking, containers, pol, pod, tipo_programacao,
                 previsao_inicio_atendimento, dt_inicio_execucao, dt_fim_execucao,
                 dt_previsao_entrega_recalculada, nome_motorista, placa_veiculo, placa_carreta,
-                cpf_motorista, justificativa_atraso, embarcador_id
+                cpf_motorista, justificativa_atraso, embarcador_id, numero_cliente
               ) VALUES (
-                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
+                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
               ) ON CONFLICT (numero_programacao) DO UPDATE SET
                 booking = EXCLUDED.booking,
                 containers = EXCLUDED.containers,
@@ -138,6 +138,7 @@ exports.uploadOperations = async (req, res) => {
                 cpf_motorista = EXCLUDED.cpf_motorista,
                 justificativa_atraso = EXCLUDED.justificativa_atraso,
                 embarcador_id = EXCLUDED.embarcador_id,
+                numero_cliente = EXCLUDED.numero_cliente,
                 data_atualizacao = NOW();
             `;
 
@@ -149,7 +150,8 @@ exports.uploadOperations = async (req, res) => {
               parseDate(row['Dt FIM da Execução (BRA)']),
               parseDate(row['Data de previsão de entrega recalculada (BRA)']),
               row['Nome do motorista programado'], row['Placa do veículo'], row['Placa da carreta 1'],
-              row['CPF motorista programado'], row['Justificativa de atraso de programação'], embarcadorId
+              row['CPF motorista programado'], row['Justificativa de atraso de programação'], embarcadorId,
+              row['Número cliente'] || null
             ];
 
             await client.query(upsert, values);
@@ -186,7 +188,7 @@ exports.uploadOperations = async (req, res) => {
 // -----------------------------------------------------------------------------------------
 exports.getOperations = async (req, res) => {
   try {
-    const { page = 1, limit = 20, embarcador_id, booking, data_previsao, status, sortBy, sortOrder } = req.query;
+    const { page = 1, limit = 20, embarcador_id, booking, container, data_previsao, status, sortBy, sortOrder } = req.query;
     const p = parseInt(page, 10) || 1;
     const l = parseInt(limit, 10) || 20;
     const offset = (p - 1) * l;
@@ -194,6 +196,7 @@ exports.getOperations = async (req, res) => {
     const where = []; const params = []; let n = 1;
     if (embarcador_id) { where.push(`op.embarcador_id = $${n++}`); params.push(embarcador_id); }
     if (booking) { where.push(`op.booking ILIKE $${n++}`); params.push(`%${booking}%`); }
+    if (container) { where.push(`op.containers ILIKE $${n++}`); params.push(`%${container}%`); }
     if (data_previsao) { where.push(`op.previsao_inicio_atendimento::date = $${n++}`); params.push(data_previsao); }
     if (status === 'atrasadas') {
       where.push(`(op.dt_inicio_execucao > op.previsao_inicio_atendimento OR (op.dt_inicio_execucao IS NULL AND op.previsao_inicio_atendimento < NOW()))`);

@@ -1,138 +1,159 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="light">
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dashboard Admin</title>
 
-  <!-- Aponta direto para o seu backend Render -->
-  <meta name="api-base" content="https://rastreamento-backend-05pi.onrender.com">
+  <!-- CSS (caminho relativo a partir de /frontend) -->
+  <link rel="stylesheet" href="./css/style.css?v=6" />
 
-  <!-- CSS (caminho absoluto a partir da raiz do site) -->
-  <link rel="stylesheet" href="/css/style.css?v=4" />
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
-  <!-- Chart.js (gráficos) -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-
-  <!-- Firebase -->
+  <!-- Firebase (App + Auth) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 
-  <!-- Seu init com firebaseConfig + initializeApp -->
-  <script src="/js/firebase-init.js?v=1"></script>
+  <!-- Sua config Firebase (o mesmo arquivo que já usa no projeto) -->
+  <script src="./js/firebase-init.js"></script>
 
-  <!-- Ícones/auxiliares (se você usa) -->
-  <script src="/js/elephant.js"></script>
+  <!-- Base do backend: Render em produção / localhost em dev -->
+  <script>
+    window.API_BASE =
+      (location.hostname.includes('netlify'))
+        ? 'https://rastreamento-backend-05pi.onrender.com'
+        : (localStorage.getItem('API_BASE') || 'http://localhost:3000');
+  </script>
 
-  <!-- JS principal (DEVE EXISTIR em /frontend/js/dashboard.js) -->
-  <script src="/js/dashboard.js?v=12" defer></script>
+  <style>
+    /* Ajustes mínimos visuais se o style.css não tiver algo */
+    .page-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; background: var(--card-bg, #fff); border-radius: 8px;
+      margin: 10px 10px 0; box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,.06));
+    }
+    .page-header .right {
+      display: flex; gap: 10px; align-items: center;
+    }
+    .btn { cursor: pointer; border: 0; border-radius: 6px; padding: 8px 12px; }
+    .btn-primary { background: #1677ff; color: #fff; }
+    .btn-danger { background: #d32f2f; color: #fff; }
+    .btn-outline { background: transparent; border: 1px solid #d0d7de; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+    .kpi { padding: 14px; border-radius: 10px; background: var(--card-bg, #fff); box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,.06)); }
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
+    .card { background: var(--card-bg, #fff); border-radius: 10px; box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,.06)); padding: 12px; }
+    .section { margin: 14px 10px; }
+    .filters { display: grid; grid-template-columns: 220px 180px 180px 180px 180px auto auto; gap: 8px; }
+    .table { width: 100%; border-collapse: collapse; }
+    .table th, .table td { padding: 8px 10px; border-bottom: 1px solid #eaecef; text-align: left; }
+    .muted { color: #6b7280; }
+    .alias-grid { width:100%; border-collapse: collapse; }
+    .alias-grid th, .alias-grid td { border-bottom: 1px solid #eee; padding: 8px 10px; }
+  </style>
 </head>
-<body class="body">
-  <header class="topbar">
+
+<body class="body light-mode">
+  <header class="page-header">
     <div class="left">
-      <strong>Dashboard <span class="badge">Admin</span></strong>
+      <strong>Dashboard <span class="muted">Admin</span></strong>
     </div>
-    <nav class="right">
-      <a class="btn btn-link" href="/admin-reports.html">Relatórios</a>
-      <span class="user-pill">Olá, <span id="userEmail">—</span></span>
-      <button id="themeToggle" class="btn btn-ghost" aria-label="Alternar tema">🌙</button>
-      <button id="btnLogout" class="btn btn-danger">Sair</button>
-    </nav>
+    <div class="right">
+      <a class="btn btn-outline" href="./admin-reports.html">Relatórios</a>
+      <button id="themeBtn" class="btn btn-outline" title="Alternar tema">🌙</button>
+      <span id="whoami" class="muted"></span>
+      <button id="logoutBtn" class="btn btn-outline">Sair</button>
+    </div>
   </header>
 
-  <main class="container">
-
-    <!-- Upload + Usuários pendentes -->
-    <section class="grid-2">
+  <main>
+    <!-- Upload & Pendentes -->
+    <section class="section" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
       <div class="card">
         <h3>Upload de Planilha</h3>
-        <div class="row">
-          <input type="file" id="csvFile" />
-          <button class="btn btn-primary" id="btnUpload">Enviar</button>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input type="file" id="xlsxFile" />
+          <button class="btn btn-primary" id="sendXlsxBtn">Enviar</button>
         </div>
-        <button id="btnWipe" class="btn btn-danger" style="margin-top:.75rem;">Limpar Todas as Operações</button>
+        <div style="margin-top:10px">
+          <button class="btn btn-danger" id="wipeBtn">Limpar Todas as Operações</button>
+        </div>
       </div>
 
       <div class="card">
         <h3>Usuários Pendentes</h3>
-        <div id="pendingUsers">—</div>
+        <div id="pendingUsers" class="muted">—</div>
       </div>
     </section>
 
-    <!-- Gerenciador de Apelidos -->
-    <section class="card">
+    <!-- Apelidos -->
+    <section class="section card">
       <h3>Gerenciador de Apelidos de Embarcadores</h3>
       <p class="muted">Vincule variações (ex.: “Ambev S.A.”) ao cliente mestre correto (ex.: “AMBEV”).</p>
 
-      <div class="row">
-        <input id="aliasDirty" class="input" placeholder="Nome 'sujo' (apelido)" />
-        <input id="aliasMaster" class="input" placeholder="Associado ao Mestre (ex.: AMBEV)" />
-        <button id="aliasSave" class="btn btn-primary">Salvar / Atualizar</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+        <input id="aliasDirty" class="input" placeholder="Nome 'sujo' (apelido)" style="min-width:220px;" />
+        <input id="aliasMaster" class="input" placeholder="Associado ao Mestre (ex.: AMBEV)" style="min-width:260px;" />
+        <button id="aliasSaveBtn" class="btn btn-primary">Salvar / Atualizar</button>
       </div>
 
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Nome "Sujo" (Apelido)</th>
-              <th>Associado ao Mestre</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody id="aliasTbody">
-            <tr><td colspan="3">Carregando...</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <table class="alias-grid" id="aliasTable">
+        <thead>
+          <tr>
+            <th>Nome "Sujo" (Apelido)</th>
+            <th>Associado ao Mestre</th>
+            <th style="width:100px;">Ações</th>
+          </tr>
+        </thead>
+        <tbody id="aliasTbody">
+          <tr><td colspan="3" class="muted">Carregando...</td></tr>
+        </tbody>
+      </table>
     </section>
 
     <!-- Filtros -->
-    <section class="card">
+    <section class="section card">
       <h3>Filtros de Operações</h3>
-      <div class="filters-row">
-        <select id="fCompany" class="input">
+      <div class="filters" style="margin-top:8px;">
+        <select id="filterCompany">
           <option value="">Todos Embarcadores</option>
         </select>
-        <input id="fBooking" class="input" placeholder="Booking" />
-        <input id="fContainer" class="input" placeholder="Contêiner" />
-        <input id="fStart" class="input" placeholder="dd/mm/aaaa" />
-        <input id="fEnd" class="input" placeholder="dd/mm/aaaa" />
-        <button id="btnFilter" class="btn btn-primary">Filtrar</button>
-        <button id="btnClear" class="btn">Limpar Filtros</button>
+        <input id="filterBooking" placeholder="Booking" />
+        <input id="filterContainer" placeholder="Contêiner" />
+        <input id="filterStart" type="date" />
+        <input id="filterEnd" type="date" />
+        <button id="applyBtn" class="btn btn-primary">Filtrar</button>
+        <button id="clearBtn" class="btn btn-outline">Limpar Filtros</button>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi"><div class="muted">Total de Operações</div><div id="kpiTotal" style="font-size:28px;font-weight:700;">0</div></div>
+        <div class="kpi"><div class="muted">On Time</div><div id="kpiOnTime" style="font-size:28px;font-weight:700;">0</div></div>
+        <div class="kpi"><div class="muted">Atrasadas</div><div id="kpiLate" style="font-size:28px;font-weight:700;">0</div></div>
+        <div class="kpi"><div class="muted">% de Atraso</div><div id="kpiPct" style="font-size:28px;font-weight:700;">0%</div></div>
+      </div>
+
+      <div class="charts">
+        <div class="card">
+          <div class="muted">Top 10 Ofensores de Atraso</div>
+          <canvas id="offendersChart" height="180"></canvas>
+        </div>
+        <div class="card">
+          <div class="muted">Top 10 Clientes com Atraso</div>
+          <canvas id="clientsChart" height="180"></canvas>
+        </div>
       </div>
     </section>
 
-    <!-- KPIs -->
-    <section class="card kpis">
-      <div class="kpi"><div id="kpiTotal"  class="kpi-number">0</div><div class="kpi-label">Total de Operações</div></div>
-      <div class="kpi"><div id="kpiOnTime" class="kpi-number">0</div><div class="kpi-label">On Time</div></div>
-      <div class="kpi"><div id="kpiLate"   class="kpi-number">0</div><div class="kpi-label">Atrasadas</div></div>
-      <div class="kpi"><div id="kpiPct"    class="kpi-number">0%</div><div class="kpi-label">% de Atraso</div></div>
-    </section>
-
-    <!-- Gráficos -->
-    <section class="grid-2">
-      <div class="card">
-        <h3>Top 10 Ofensores de Atraso</h3>
-        <canvas id="chartOffenders" height="220"></canvas>
-      </div>
-      <div class="card">
-        <h3>Top 10 Clientes com Atraso</h3>
-        <canvas id="chartClients" height="220"></canvas>
-      </div>
-    </section>
-
-    <!-- Lista de Operações -->
-    <section class="card">
+    <!-- Lista -->
+    <section class="section card">
       <h3>Lista de Operações</h3>
-      <div id="opsContainer" class="table-wrap">
-        <div class="muted">Carregando…</div>
-      </div>
-      <div class="pager">
-        <button id="prevPage" class="btn">← Anterior</button>
-        <button id="nextPage" class="btn">Próxima →</button>
-      </div>
+      <div id="opsArea" class="muted">Carregando...</div>
     </section>
   </main>
+
+  <!-- Seu JS do dashboard (caminho relativo e sem elephant.js) -->
+  <script src="./js/dashboard.js?v=6" defer></script>
 </body>
 </html>

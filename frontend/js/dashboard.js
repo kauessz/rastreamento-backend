@@ -1,280 +1,354 @@
-// ========= Util =========
-const $  = (sel, el=document) => el.querySelector(sel);
-const $$ = (sel, el=document) => [...el.querySelectorAll(sel)];
 
-const API_BASE =
-  (document.querySelector('meta[name="api-base"]')?.content || '').replace(/\/$/, '') + '/api';
 
-function fmtDateISO(dmy) {
-  // dd/mm/aaaa -> aaaa-mm-dd
-  if (!dmy) return '';
-  const [d,m,y] = dmy.split('/');
-  if (!y) return '';
-  return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
-}
+(() => {
+  // ======== Helpers básicos ========
+  const $ = (sel) => document.querySelector(sel);
+  const el = {
+    whoami: $("#whoami"),
+    logoutBtn: $("#logoutBtn"),
+    themeBtn: $("#themeBtn"),
+    sendXlsxBtn: $("#sendXlsxBtn"),
+    xlsxFile: $("#xlsxFile"),
+    wipeBtn: $("#wipeBtn"),
 
-async function authToken() {
-  const u = firebase.auth().currentUser;
-  if (!u) throw new Error('Não autenticado');
-  return u.getIdToken(true);
-}
+    aliasDirty: $("#aliasDirty"),
+    aliasMaster: $("#aliasMaster"),
+    aliasSaveBtn: $("#aliasSaveBtn"),
+    aliasTbody: $("#aliasTbody"),
 
-async function apiGet(path, params={}) {
-  const url = new URL(API_BASE + path);
-  Object.entries(params).forEach(([k,v]) => (v!=null && v!=='') && url.searchParams.set(k,v));
-  const token = await authToken();
-  const res = await fetch(url.toString(), {
-    headers: { 'Authorization': `Bearer ${token}` }
-  });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  return res.json();
-}
+    filterCompany: $("#filterCompany"),
+    filterBooking: $("#filterBooking"),
+    filterContainer: $("#filterContainer"),
+    filterStart: $("#filterStart"),
+    filterEnd: $("#filterEnd"),
+    applyBtn: $("#applyBtn"),
+    clearBtn: $("#clearBtn"),
 
-// ========= Tema =========
-(function themeBoot() {
-  const saved = localStorage.getItem('theme') || 'light';
-  document.documentElement.setAttribute('data-theme', saved);
-  const btn = $('#themeToggle');
-  if (btn) {
-    btn.textContent = (saved === 'dark' ? '☀️' : '🌙');
-    btn.addEventListener('click', () => {
-      const now = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', now);
-      localStorage.setItem('theme', now);
-      btn.textContent = (now === 'dark' ? '☀️' : '🌙');
+    kpiTotal: $("#kpiTotal"),
+    kpiOnTime: $("#kpiOnTime"),
+    kpiLate: $("#kpiLate"),
+    kpiPct: $("#kpiPct"),
+
+    offendersChart: $("#offendersChart"),
+    clientsChart: $("#clientsChart"),
+    opsArea: $("#opsArea"),
+    pendingUsers: $("#pendingUsers"),
+  };
+
+  let charts = {
+    offenders: null,
+    clients: null,
+  };
+
+  const API = window.API_BASE || "";
+  if (!API) console.warn("API_BASE não definido!");
+
+  // ======== Tema claro/escuro ========
+  function applyTheme(t) {
+    document.body.classList.remove("light-mode", "dark-mode");
+    document.body.classList.add(t);
+    el.themeBtn.textContent = t === "dark-mode" ? "☀️" : "🌙";
+    localStorage.setItem("theme", t);
+  }
+  function toggleTheme() {
+    const now = localStorage.getItem("theme") || "light-mode";
+    const next = now === "light-mode" ? "dark-mode" : "light-mode";
+    applyTheme(next);
+  }
+  applyTheme(localStorage.getItem("theme") || "light-mode");
+  el.themeBtn.addEventListener("click", toggleTheme);
+
+  // ======== Firebase/Auth ========
+  function authReady() {
+    return new Promise((resolve) => {
+      const cur = firebase.auth().currentUser;
+      if (cur) return resolve(cur);
+      firebase.auth().onAuthStateChanged((u) => resolve(u));
     });
   }
-})();
-
-// ========= Estado =========
-let currentPage = 1;
-let offendersChart, clientsChart;
-
-// ========= Render =========
-function renderAliases(list) {
-  const tbody = $('#aliasTbody');
-  if (!list?.length) {
-    tbody.innerHTML = `<tr><td colspan="3">Nenhum apelido.</td></tr>`;
-    return;
+  async function token(force = false) {
+    const u = await authReady();
+    if (!u) throw new Error("Não autenticado.");
+    return await u.getIdToken(force);
   }
-  tbody.innerHTML = list.map(a => `
-    <tr>
-      <td>${a.dirty_name}</td>
-      <td>${a.master_name || '—'}</td>
-      <td><button class="btn btn-ghost" data-del="${a.id}">Excluir</button></td>
-    </tr>
-  `).join('');
-}
 
-function renderKpis(k) {
-  $('#kpiTotal').textContent  = k.total || 0;
-  $('#kpiOnTime').textContent = k.on_time || 0;
-  $('#kpiLate').textContent   = k.late || 0;
-  const pct = (k.total ? ((k.late||0) / k.total * 100) : 0).toFixed(2) + '%';
-  $('#kpiPct').textContent = pct;
-}
-
-function renderBars(canvasId, labels, data) {
-  const ctx = $(canvasId).getContext('2d');
-  const chart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{ label: 'Ocorrências', data }]
-    },
-    options: {
-      indexAxis: 'y',
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: { x: { beginAtZero: true } }
-    }
-  });
-  return chart;
-}
-
-function renderOps(list) {
-  const c = $('#opsContainer');
-  if (!list?.length) {
-    c.innerHTML = `<div class="muted">Nenhuma operação encontrada.</div>`;
-    return;
+  async function apiGet(path, params = {}) {
+    const url = new URL(API + path);
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
+    });
+    const t = await token();
+    const res = await fetch(url.toString(), { headers: { Authorization: "Bearer " + t } });
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
   }
-  const rows = list.map(o => `
-    <details class="row">
-      <summary class="row-head">
-        <div class="cell">${o.booking || '—'}</div>
-        <div class="cell">${o.container || '—'}</div>
-        <div class="cell">${o.client_name || '—'}</div>
-        <div class="cell">${o.port || '—'}</div>
-        <div class="cell">${o.scheduled_at || '—'}</div>
-        <div class="cell">${o.started_at || '—'}</div>
-        <div class="cell">${o.finished_at || '—'}</div>
-        <div class="cell">${o.delay_hhmm || '—'}</div>
-        <div class="cell">${o.delay_reason || '—'}</div>
-      </summary>
-      <div class="row-body">
-        <div><strong>Tipo de Operação:</strong> ${o.operation_type || '—'}</div>
-        <div><strong>Status:</strong> ${o.status || '—'}</div>
-        <div><strong>Nº Programação:</strong> ${o.program_number || '—'}</div>
-        <div><strong>Motorista:</strong> ${o.driver_name || '—'}</div>
-        <div><strong>CPF do Motorista:</strong> ${o.driver_cpf || '—'}</div>
-        <div><strong>Placa Veículo:</strong> ${o.truck_plate || '—'}</div>
-        <div><strong>Placa Carreta:</strong> ${o.trailer_plate || '—'}</div>
-        <div><strong>Nº do Cliente:</strong> ${o.client_number || '—'}</div>
-      </div>
-    </details>
-  `).join('');
-  c.innerHTML = `
-    <div class="table ops">
-      <div class="row row-head stick">
-        <div class="cell">Booking</div>
-        <div class="cell">Contêiner</div>
-        <div class="cell">Embarcador</div>
-        <div class="cell">Porto</div>
-        <div class="cell">Previsão Atendimento</div>
-        <div class="cell">Início Execução</div>
-        <div class="cell">Fim Execução</div>
-        <div class="cell">Atraso (HH:MM)</div>
-        <div class="cell">Motivo do Atraso</div>
-      </div>
-      ${rows}
-    </div>
-  `;
-}
 
-// ========= Carregadores =========
-async function loadAliases() {
-  try {
-    const data = await apiGet('/aliases');
-    renderAliases(data);
-  } catch (e) {
-    $('#aliasTbody').innerHTML = `<tr><td colspan="3">Erro ao carregar apelidos.</td></tr>`;
-    console.error('aliases', e);
+  async function apiPost(path, body = {}) {
+    const t = await token();
+    const res = await fetch(API + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + t },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
   }
-}
 
-async function loadKpisAndCharts() {
-  try {
-    const params = readFilters();
-    const data = await apiGet('/dashboard/kpis', params);
-    renderKpis(data.kpis || data);
-
-    // gráficos (usa data.charts se existir, senão ignora)
-    if (offendersChart) offendersChart.destroy();
-    if (clientsChart)   clientsChart.destroy();
-
-    if (data.offenders?.length) {
-      offendersChart = renderBars('#chartOffenders',
-        data.offenders.map(i => i.label),
-        data.offenders.map(i => i.value)
-      );
-    }
-    if (data.clients?.length) {
-      clientsChart = renderBars('#chartClients',
-        data.clients.map(i => i.label),
-        data.clients.map(i => i.value)
-      );
-    }
-  } catch (e) {
-    console.error('kpis/charts', e);
+  async function apiDelete(path) {
+    const t = await token();
+    const res = await fetch(API + path, { method: "DELETE", headers: { Authorization: "Bearer " + t } });
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
   }
-}
 
-function readFilters() {
-  return {
-    companyId: $('#fCompany').value || '',
-    booking:   $('#fBooking').value || '',
-    container: $('#fContainer').value || '',
-    start:     fmtDateISO($('#fStart').value),
-    end:       fmtDateISO($('#fEnd').value),
-    page:      currentPage,
-    limit:     50
-  };
-}
-
-async function loadOperations() {
-  try {
-    const params = readFilters();
-    const data = await apiGet('/operations', params);
-    renderOps(data.items || data.rows || data);
-  } catch (e) {
-    $('#opsContainer').innerHTML = `<div class="muted">Falha ao carregar operações.</div>`;
-    console.error('operations', e);
-  }
-}
-
-// ========= Ações UI =========
-function bindUI() {
-  $('#btnLogout')?.addEventListener('click', () => firebase.auth().signOut());
-
-  $('#btnFilter')?.addEventListener('click', async () => {
-    currentPage = 1;
-    await Promise.all([loadKpisAndCharts(), loadOperations()]);
+  // ======== UI Header ========
+  firebase.auth().onAuthStateChanged((u) => {
+    el.whoami.textContent = u ? `Olá, ${u.email}` : "";
+    if (!u) location.href = "./login.html";
   });
 
-  $('#btnClear')?.addEventListener('click', async () => {
-    $('#fCompany').value = '';
-    $('#fBooking').value = '';
-    $('#fContainer').value = '';
-    $('#fStart').value = '';
-    $('#fEnd').value = '';
-    currentPage = 1;
-    await Promise.all([loadKpisAndCharts(), loadOperations()]);
+  el.logoutBtn.addEventListener("click", async () => {
+    await firebase.auth().signOut();
+    location.href = "./login.html";
   });
 
-  $('#prevPage')?.addEventListener('click', async () => {
-    if (currentPage > 1) {
-      currentPage--;
-      await loadOperations();
-    }
-  });
-  $('#nextPage')?.addEventListener('click', async () => {
-    currentPage++;
-    await loadOperations();
-  });
-
-  $('#aliasSave')?.addEventListener('click', async () => {
+  // ======== Upload & Wipe (stubs) ========
+  el.sendXlsxBtn.addEventListener("click", async () => {
+    if (!el.xlsxFile.files[0]) return alert("Escolha um arquivo .xlsx");
     try {
-      const dirty  = $('#aliasDirty').value.trim();
-      const master = $('#aliasMaster').value.trim();
-      if (!dirty || !master) return alert('Preencha os dois campos.');
-      const token = await authToken();
-      const res = await fetch(API_BASE + '/aliases', {
-        method: 'POST',
-        headers: {
-          'Content-Type':'application/json',
-          'Authorization':`Bearer ${token}`
-        },
-        body: JSON.stringify({ dirty_name: dirty, master_name: master })
+      const form = new FormData();
+      form.append("file", el.xlsxFile.files[0]);
+      const t = await token();
+      const res = await fetch(API + "/api/operations/upload-xlsx", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + t },
+        body: form
       });
       if (!res.ok) throw new Error(await res.text());
-      $('#aliasDirty').value = '';
-      $('#aliasMaster').value = '';
-      loadAliases();
+      alert("Upload concluído.");
+      loadAll();
     } catch (e) {
-      alert('Falha ao salvar apelido.');
       console.error(e);
+      alert("Falha no upload: " + e.message);
     }
   });
-}
 
-// ========= Boot =========
-firebase.auth().onAuthStateChanged(async (user) => {
-  try {
-    if (!user) {
-      location.href = '/login.html';
-      return;
+  el.wipeBtn.addEventListener("click", async () => {
+    if (!confirm("Tem certeza que deseja APAGAR todas as operações?")) return;
+    try {
+      await apiPost("/api/operations/wipe");
+      alert("Operações removidas.");
+      loadAll();
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao limpar: " + e.message);
     }
-    $('#userEmail').textContent = user.email || '—';
+  });
 
-    bindUI();
+  // ======== Apelidos ========
+  async function loadAliases() {
+    try {
+      const data = await apiGet("/api/aliases");
+      const tbody = el.aliasTbody;
+      if (!Array.isArray(data) || data.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" class="muted">Nenhum apelido cadastrado.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = data
+        .map(
+          (a) => `<tr>
+            <td>${a.dirty_name || "-"}</td>
+            <td>${a.master_name || "-"}</td>
+            <td><button class="btn btn-outline" data-del="${a.id}">Excluir</button></td>
+          </tr>`
+        )
+        .join("");
 
-    // Carrega dados iniciais
-    await Promise.all([
-      loadAliases(),
-      loadKpisAndCharts(),
-      loadOperations()
-    ]);
-  } catch (e) {
-    console.error('init', e);
+      tbody.querySelectorAll("[data-del]").forEach((btn) =>
+        btn.addEventListener("click", async () => {
+          try {
+            await apiDelete(`/api/aliases/${btn.dataset.del}`);
+            loadAliases();
+          } catch (e) {
+            alert("Erro ao excluir: " + e.message);
+          }
+        })
+      );
+    } catch (e) {
+      el.aliasTbody.innerHTML = `<tr><td colspan="3" class="muted">Erro ao carregar apelidos.</td></tr>`;
+      console.error(e);
+    }
   }
-});
+
+  el.aliasSaveBtn.addEventListener("click", async () => {
+    const dirty = el.aliasDirty.value.trim();
+    const master = el.aliasMaster.value.trim();
+    if (!dirty || !master) return alert("Preencha os dois campos.");
+    try {
+      await apiPost("/api/aliases", { dirty_name: dirty, master_name: master });
+      el.aliasDirty.value = "";
+      el.aliasMaster.value = "";
+      loadAliases();
+    } catch (e) {
+      alert("Erro ao salvar: " + e.message);
+    }
+  });
+
+  // ======== Filtros, KPIs, Gráficos & Lista ========
+  function readFilters() {
+    return {
+      companyId: el.filterCompany.value || "",
+      booking: el.filterBooking.value.trim(),
+      container: el.filterContainer.value.trim(),
+      start: el.filterStart.value || "",
+      end: el.filterEnd.value || "",
+    };
+  }
+
+  async function loadCompaniesIntoFilter() {
+    try {
+      const list = await apiGet("/api/dashboard/companies");
+      el.filterCompany.innerHTML = `<option value="">Todos Embarcadores</option>` + 
+        (list || []).map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+    } catch (e) {
+      console.warn("companies:", e.message);
+    }
+  }
+
+  async function loadKpisAndCharts() {
+    const f = readFilters();
+    try {
+      const k = await apiGet("/api/dashboard/kpis", f);
+      el.kpiTotal.textContent = k.total || 0;
+      el.kpiOnTime.textContent = k.onTime || 0;
+      el.kpiLate.textContent = k.late || 0;
+      el.kpiPct.textContent = (k.latePct ?? 0) + "%";
+
+      // charts (offenders / clients)
+      const ctx1 = el.offendersChart.getContext("2d");
+      const ctx2 = el.clientsChart.getContext("2d");
+      charts.offenders?.destroy();
+      charts.clients?.destroy();
+
+      charts.offenders = new Chart(ctx1, {
+        type: "bar",
+        data: {
+          labels: (k.topOffenders || []).map((x) => x.reason),
+          datasets: [{ label: "Ocorrências", data: (k.topOffenders || []).map((x) => x.count) }]
+        },
+        options: { responsive: true, scales: { x: { ticks: { maxRotation: 0 }}}}
+      });
+
+      charts.clients = new Chart(ctx2, {
+        type: "bar",
+        data: {
+          labels: (k.topClients || []).map((x) => x.client),
+          datasets: [{ label: "Atrasos", data: (k.topClients || []).map((x) => x.count) }]
+        },
+        options: { responsive: true, scales: { x: { ticks: { maxRotation: 0 }}}}
+      });
+    } catch (e) {
+      console.error(e);
+      el.kpiTotal.textContent = "0";
+      el.kpiOnTime.textContent = "0";
+      el.kpiLate.textContent = "0";
+      el.kpiPct.textContent = "0%";
+    }
+  }
+
+  function opRow(o) {
+    return `<tr>
+      <td>${o.booking || "-"}</td>
+      <td>${o.container || "-"}</td>
+      <td>${o.client || "-"}</td>
+      <td>${o.port || "-"}</td>
+      <td>${o.sla_previsao || "-"}</td>
+      <td>${o.exec_inicio || "-"}</td>
+      <td>${o.exec_fim || "-"}</td>
+      <td>${o.atraso_hhmm || "-"}</td>
+      <td>${o.motivo || "-"}</td>
+    </tr>
+    <tr>
+      <td colspan="9" class="muted">
+        <b>Tipo de Operação:</b> ${o.tipo_operacao || "N/A"} —
+        <b>Transportadora:</b> ${o.transportadora || "N/A"} —
+        <b>Nº Programação:</b> ${o.num_programacao || "N/A"} —
+        <b>Motorista:</b> ${o.motorista || "N/A"} —
+        <b>CPF:</b> ${o.cpf || "N/A"} —
+        <b>Placa Veículo:</b> ${o.placa_veiculo || "N/A"} —
+        <b>Placa Carreta:</b> ${o.placa_carreta || "N/A"} —
+        <b>Nº Cliente:</b> ${o.numero_cliente || "N/A"}
+      </td>
+    </tr>`;
+  }
+
+  async function loadOperations() {
+    const f = readFilters();
+    try {
+      const data = await apiGet("/api/dashboard/operations", f);
+      const items = Array.isArray(data?.items) ? data.items : [];
+      if (items.length === 0) {
+        el.opsArea.innerHTML = `<div class="muted">Nenhuma operação encontrada.</div>`;
+        return;
+      }
+      el.opsArea.innerHTML = `
+        <div style="overflow:auto">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Booking</th><th>Contêiner</th><th>Embarcador</th><th>Porto</th>
+                <th>Previsão Atendimento</th><th>Início Execução</th><th>Fim Execução</th>
+                <th>Atraso (HH:MM)</th><th>Motivo do Atraso</th>
+              </tr>
+            </thead>
+            <tbody>${items.map(opRow).join("")}</tbody>
+          </table>
+        </div>`;
+    } catch (e) {
+      console.error(e);
+      el.opsArea.innerHTML = `<div class="muted">Falha ao carregar operações.</div>`;
+    }
+  }
+
+  // ======== Pendentes (opcional) ========
+  async function loadPendingUsers() {
+    try {
+      const x = await apiGet("/api/dashboard/pending-users");
+      el.pendingUsers.textContent = Array.isArray(x) && x.length ? `${x.length} pendentes` : "—";
+    } catch (e) {
+      el.pendingUsers.textContent = "—";
+    }
+  }
+
+  // ======== Eventos dos filtros ========
+  el.applyBtn.addEventListener("click", () => loadAll());
+  el.clearBtn.addEventListener("click", () => {
+    el.filterCompany.value = "";
+    el.filterBooking.value = "";
+    el.filterContainer.value = "";
+    el.filterStart.value = "";
+    el.filterEnd.value = "";
+    loadAll();
+  });
+
+  // ======== Boot ========
+  async function loadAll() {
+    await Promise.all([
+      loadKpisAndCharts(),
+      loadOperations(),
+      loadAliases(),
+      loadPendingUsers(),
+    ]);
+  }
+
+  (async function boot() {
+    try {
+      await authReady();
+      await loadCompaniesIntoFilter();
+      await loadAll();
+    } catch (e) {
+      console.error("Erro ao iniciar dashboard:", e);
+      alert("Erro: " + (e.message || e));
+    }
+  })();
+})();

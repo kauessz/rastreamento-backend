@@ -51,10 +51,10 @@ const app = express();
 })();
 
 /* ============================ Middlewares base ============================ */
-/** Importante: evita o erro do express-rate-limit e não deixa trust proxy “permissivo” */
-app.set('trust proxy', 'loopback'); // em vez de true
+/** Evita erro do express-rate-limit com proxy permissivo */
+app.set('trust proxy', 'loopback'); // não use true em produção
 
-/** CORS: permite origens definidas em env; se vazio, permite todas */
+/** CORS: libera as origens da env; se vazio, libera todas */
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
   .map(s => s.trim())
@@ -62,15 +62,15 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true); // browsers que não enviam origin
+    if (!origin) return cb(null, true); // navegadores que não enviam Origin
     if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return cb(null, true);
     return cb(new Error(`CORS bloqueado: ${origin}`));
   },
   credentials: true
 }));
 
-/** Preflight amplo (Express 5: use '(.*)' ou regex, nunca '*') */
-app.options('(.*)', cors());
+/** Preflight global — Express 5: use RegExp, não strings com '(.*)' nem '*' */
+app.options(/.*/, cors());
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
@@ -78,7 +78,7 @@ app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-/** Rate limit “hardened” (evita o ValidationError do pacote) */
+/** Rate limit “hardened” */
 const limiter = rateLimit({
   windowMs: 60 * 1000,
   max: 1200,

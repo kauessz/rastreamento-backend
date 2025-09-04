@@ -1,5 +1,5 @@
 (() => {
-  // ======== Helpers básicos ========
+  // ======== Helpers ========
   const $ = (sel) => document.querySelector(sel);
   const el = {
     whoami: $("#whoami"),
@@ -33,33 +33,31 @@
     pendingUsers: $("#pendingUsers"),
   };
 
-  // página de lista que deve abrir ao clicar nos KPIs (ajuste se for outra)
+  // página de lista aberta ao clicar nos KPIs (ajuste se for outra rota)
   const LIST_PAGE_PATH = "/client-dashboard/index.html";
-
-  let charts = {
-    offenders: null,
-    clients: null,
-  };
 
   const API = window.API_BASE || "";
   if (!API) console.warn("API_BASE não definido!");
 
-  // ======== Tema claro/escuro ========
+  const charts = { offenders: null, clients: null };
+  const CHART_HEIGHT = 320; // altura fixa p/ evitar resize loop
+
+  // ======== Tema ========
   function applyTheme(t) {
     document.body.classList.remove("light-mode", "dark-mode");
     document.body.classList.add(t);
-    el.themeBtn.textContent = t === "dark-mode" ? "☀️" : "🌙";
+    const btn = $("#themeBtn");
+    if (btn) btn.textContent = t === "dark-mode" ? "☀️" : "🌙";
     localStorage.setItem("theme", t);
   }
   function toggleTheme() {
     const now = localStorage.getItem("theme") || "light-mode";
-    const next = now === "light-mode" ? "dark-mode" : "light-mode";
-    applyTheme(next);
+    applyTheme(now === "light-mode" ? "dark-mode" : "light-mode");
   }
   applyTheme(localStorage.getItem("theme") || "light-mode");
-  el.themeBtn.addEventListener("click", toggleTheme);
+  el.themeBtn?.addEventListener("click", toggleTheme);
 
-  // ======== Firebase/Auth ========
+  // ======== Auth ========
   function authReady() {
     return new Promise((resolve) => {
       const cur = firebase.auth().currentUser;
@@ -80,10 +78,9 @@
     });
     const t = await token();
     const res = await fetch(url.toString(), { headers: { Authorization: "Bearer " + t } });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await safeText(res));
     return await res.json();
   }
-
   async function apiPost(path, body = {}) {
     const t = await token();
     const res = await fetch(API + path, {
@@ -91,30 +88,29 @@
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + t },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await safeText(res));
     return await res.json();
   }
-
   async function apiDelete(path) {
     const t = await token();
     const res = await fetch(API + path, { method: "DELETE", headers: { Authorization: "Bearer " + t } });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await safeText(res));
     return await res.json();
   }
+  async function safeText(r){ try { return await r.text(); } catch { return String(r.status); } }
 
-  // ======== UI Header ========
+  // ======== Header ========
   firebase.auth().onAuthStateChanged((u) => {
     el.whoami.textContent = u ? `Olá, ${u.email}` : "";
     if (!u) location.href = "./login.html";
   });
-
-  el.logoutBtn.addEventListener("click", async () => {
+  el.logoutBtn?.addEventListener("click", async () => {
     await firebase.auth().signOut();
     location.href = "./login.html";
   });
 
-  // ======== Upload & Wipe (stubs) ========
-  el.sendXlsxBtn.addEventListener("click", async () => {
+  // ======== Upload / Wipe ========
+  el.sendXlsxBtn?.addEventListener("click", async () => {
     if (!el.xlsxFile.files[0]) return alert("Escolha um arquivo .xlsx");
     try {
       const form = new FormData();
@@ -125,7 +121,7 @@
         headers: { Authorization: "Bearer " + t },
         body: form
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(await safeText(res));
       alert("Upload concluído.");
       loadAll();
     } catch (e) {
@@ -133,8 +129,7 @@
       alert("Falha no upload: " + e.message);
     }
   });
-
-  el.wipeBtn.addEventListener("click", async () => {
+  el.wipeBtn?.addEventListener("click", async () => {
     if (!confirm("Tem certeza que deseja APAGAR todas as operações?")) return;
     try {
       await apiPost("/api/operations/wipe");
@@ -150,94 +145,107 @@
   async function loadAliases() {
     try {
       const data = await apiGet("/api/aliases");
-      const tbody = el.aliasTbody;
       if (!Array.isArray(data) || data.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="3" class="muted">Nenhum apelido cadastrado.</td></tr>`;
+        el.aliasTbody.innerHTML = `<tr><td colspan="3" class="muted">Nenhum apelido cadastrado.</td></tr>`;
         return;
       }
-      // suporta {alias, master} ou {dirty_name, master_name}
-      tbody.innerHTML = data
-        .map((a) => {
-          const alias  = a.alias || a.dirty_name || a.dirty || "-";
-          const master = a.master || a.master_name || a.nome_mestre || "-";
-          const id     = a.id;
-          return `<tr>
-            <td>${alias}</td>
-            <td>${master}</td>
-            <td><button class="btn btn-outline" data-del="${id}">Excluir</button></td>
-          </tr>`;
-        })
-        .join("");
-
-      tbody.querySelectorAll("[data-del]").forEach((btn) =>
+      el.aliasTbody.innerHTML = data.map((a) => {
+        const alias  = a.alias || a.dirty_name || a.dirty || "-";
+        const master = a.master || a.master_name || a.nome_mestre || "-";
+        return `<tr>
+          <td>${alias}</td>
+          <td>${master}</td>
+          <td><button class="btn btn-outline" data-del="${a.id}">Excluir</button></td>
+        </tr>`;
+      }).join("");
+      el.aliasTbody.querySelectorAll("[data-del]").forEach((btn) =>
         btn.addEventListener("click", async () => {
-          try {
-            await apiDelete(`/api/aliases/${btn.dataset.del}`);
-            loadAliases();
-          } catch (e) {
-            alert("Erro ao excluir: " + e.message);
-          }
+          try { await apiDelete(`/api/aliases/${btn.dataset.del}`); loadAliases(); }
+          catch (e) { alert("Erro ao excluir: " + e.message); }
         })
       );
     } catch (e) {
-      el.aliasTbody.innerHTML = `<tr><td colspan="3" class="muted">Erro ao carregar apelidos.</td></tr>`;
       console.error(e);
+      el.aliasTbody.innerHTML = `<tr><td colspan="3" class="muted">Erro ao carregar apelidos.</td></tr>`;
     }
   }
 
-  el.aliasSaveBtn.addEventListener("click", async () => {
+  el.aliasSaveBtn?.addEventListener("click", async () => {
     const dirty = el.aliasDirty.value.trim();
     const master = el.aliasMaster.value.trim();
     if (!dirty || !master) return alert("Preencha os dois campos.");
     try {
-      // aceita ambos os formatos no backend
       await apiPost("/api/aliases", { alias: dirty, master });
-      el.aliasDirty.value = "";
-      el.aliasMaster.value = "";
+      el.aliasDirty.value = ""; el.aliasMaster.value = "";
       loadAliases();
     } catch (e) {
-      // fallback para a outra forma de payload
+      // fallback payload alternativo
       try {
         await apiPost("/api/aliases", { dirty_name: dirty, master_name: master });
-        el.aliasDirty.value = "";
-        el.aliasMaster.value = "";
+        el.aliasDirty.value = ""; el.aliasMaster.value = "";
         loadAliases();
-      } catch (err) {
-        alert("Erro ao salvar: " + err.message);
-      }
+      } catch (err) { alert("Erro ao salvar: " + err.message); }
     }
   });
 
-  // ======== Filtros, KPIs, Gráficos & Lista ========
+  // ======== Filtros & util ========
   function readFilters() {
     return {
-      companyId: el.filterCompany.value || "",
-      booking: el.filterBooking.value.trim(),
-      container: el.filterContainer.value.trim(),
-      start: el.filterStart.value || "",
-      end: el.filterEnd.value || "",
+      companyId: el.filterCompany?.value || "",
+      booking: el.filterBooking?.value?.trim(),
+      container: el.filterContainer?.value?.trim(),
+      start: el.filterStart?.value || "",
+      end: el.filterEnd?.value || "",
     };
   }
-
   async function loadCompaniesIntoFilter() {
     try {
       const list = await apiGet("/api/dashboard/companies");
+      if (!el.filterCompany) return;
       el.filterCompany.innerHTML = `<option value="">Todos Embarcadores</option>` +
         (list || []).map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
-    } catch (e) {
-      console.warn("companies:", e.message);
-    }
+    } catch (e) { console.warn("companies:", e.message); }
   }
 
-  // helper para construir gráficos horizontais
+  // ======== Chart helpers ========
+  function cssVar(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+  function hexToRgba(hex, alpha = 1) {
+    let h = hex.replace('#','').trim();
+    if (h.length === 3) h = h.split('').map(x => x+x).join('');
+    const bigint = parseInt(h, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  function prepCanvas(canvas) {
+    if (!canvas) return;
+    const p = canvas.parentElement;
+    if (p) {
+      p.style.position = "relative";
+      p.style.height = CHART_HEIGHT + "px";  // altura fixa do container
+    }
+    canvas.style.width = "100%";
+    canvas.style.height = CHART_HEIGHT + "px"; // altura fixa do canvas
+    // remove atributos height/width nativos que podem interferir
+    canvas.removeAttribute("height");
+    canvas.removeAttribute("width");
+  }
   function makeHorizontalBar(ctx, labels, values, label) {
+    const primary = cssVar('--primary', '#1976d2');
+    const bg = hexToRgba(primary, 0.35);
+    const border = hexToRgba(primary, 1);
+
     return new Chart(ctx, {
       type: "bar",
-      data: { labels, datasets: [{ label, data: values, borderWidth: 1 }] },
+      data: { labels, datasets: [{ label, data: values, backgroundColor: bg, borderColor: border, borderWidth: 1 }] },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        indexAxis: "y",                    // <<< eixo X = valores
+        indexAxis: "y", // eixo X = valores
         scales: {
           x: { beginAtZero: true, ticks: { precision: 0 } },
           y: { ticks: { autoSkip: false } }
@@ -247,6 +255,7 @@
     });
   }
 
+  // ======== KPIs/Charts/Lista ========
   async function loadKpisAndCharts() {
     const f = readFilters();
     try {
@@ -256,28 +265,34 @@
       el.kpiLate.textContent = k.late || 0;
       el.kpiPct.textContent = (k.latePct ?? 0) + "%";
 
-      // charts (offenders / clients) — HORIZONTAIS
-      const ctx1 = el.offendersChart.getContext("2d");
-      const ctx2 = el.clientsChart.getContext("2d");
+      // preparar canvases com altura fixa
+      prepCanvas(el.offendersChart);
+      prepCanvas(el.clientsChart);
+
       charts.offenders?.destroy();
       charts.clients?.destroy();
 
       const offenders = k.topOffenders || [];
       const clients   = k.topClients   || [];
 
-      charts.offenders = makeHorizontalBar(
-        ctx1,
-        offenders.map(x => x.reason),
-        offenders.map(x => x.count),
-        "Ocorrências"
-      );
-
-      charts.clients = makeHorizontalBar(
-        ctx2,
-        clients.map(x => x.client),
-        clients.map(x => x.count),
-        "Atrasos"
-      );
+      if (el.offendersChart) {
+        const ctx1 = el.offendersChart.getContext("2d");
+        charts.offenders = makeHorizontalBar(
+          ctx1,
+          offenders.map(x => x.reason),
+          offenders.map(x => x.count),
+          "Ocorrências"
+        );
+      }
+      if (el.clientsChart) {
+        const ctx2 = el.clientsChart.getContext("2d");
+        charts.clients = makeHorizontalBar(
+          ctx2,
+          clients.map(x => x.client),
+          clients.map(x => x.count),
+          "Atrasos"
+        );
+      }
     } catch (e) {
       console.error(e);
       el.kpiTotal.textContent = "0";
@@ -341,21 +356,18 @@
     }
   }
 
-  // ======== Pendentes (opcional) ========
   async function loadPendingUsers() {
     try {
       const x = await apiGet("/api/dashboard/pending-users");
       el.pendingUsers.textContent = Array.isArray(x) && x.length ? `${x.length} pendentes` : "—";
-    } catch (e) {
-      el.pendingUsers.textContent = "—";
-    }
+    } catch { el.pendingUsers.textContent = "—"; }
   }
 
-  // ======== KPIs clicáveis: navega para a lista filtrada ========
+  // ======== KPIs clicáveis → navegação ========
   function navigateToList(status) {
     const f = readFilters();
     const qs = new URLSearchParams();
-    if (status) qs.set("status", status);               // onTime | late | all
+    if (status && status !== "all") qs.set("status", status); // onTime | late
     if (f.booking) qs.set("booking", f.booking);
     if (f.container) qs.set("container", f.container);
     if (f.companyId) qs.set("companyId", f.companyId);
@@ -363,23 +375,21 @@
     if (f.end) qs.set("end", f.end);
     window.location.href = `${LIST_PAGE_PATH}?${qs.toString()}`;
   }
-  // Se os KPIs forem spans dentro de cards, capturamos o click no próprio span:
   el.kpiTotal?.addEventListener("click", () => navigateToList("all"));
   el.kpiOnTime?.addEventListener("click", () => navigateToList("onTime"));
   el.kpiLate?.addEventListener("click", () => navigateToList("late"));
-  // Se houver elementos com data-filter (compatibilidade):
   document.querySelectorAll(".kpi-card[data-filter]").forEach(card => {
     card.addEventListener("click", () => navigateToList(card.dataset.filter));
   });
 
-  // ======== Eventos dos filtros ========
-  el.applyBtn.addEventListener("click", () => loadAll());
-  el.clearBtn.addEventListener("click", () => {
-    el.filterCompany.value = "";
-    el.filterBooking.value = "";
-    el.filterContainer.value = "";
-    el.filterStart.value = "";
-    el.filterEnd.value = "";
+  // ======== Filtros ========
+  el.applyBtn?.addEventListener("click", () => loadAll());
+  el.clearBtn?.addEventListener("click", () => {
+    if (el.filterCompany) el.filterCompany.value = "";
+    if (el.filterBooking) el.filterBooking.value = "";
+    if (el.filterContainer) el.filterContainer.value = "";
+    if (el.filterStart) el.filterStart.value = "";
+    if (el.filterEnd) el.filterEnd.value = "";
     loadAll();
   });
 
@@ -392,7 +402,6 @@
       loadPendingUsers(),
     ]);
   }
-
   (async function boot() {
     try {
       await authReady();

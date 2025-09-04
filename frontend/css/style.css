@@ -296,3 +296,46 @@ input:focus-visible, select:focus-visible{
 .details-content { background-color: var(--cor-fundo); }
 .details-wrapper { display:flex; flex-wrap:wrap; gap:24px; padding:12px; }
 .hidden { display: none !important; }             /* caso opte por usar .hidden */
+
+/* ==== Correção de altura dos gráficos (evita resize loop) ==== */
+.chart-card,
+.chart-wrap,
+#offendersChart:not([height]),
+#clientsChart:not([height]) {
+  /* garanta um container com altura explícita */
+  height: 320px;
+}
+.chart-card canvas,
+.chart-wrap canvas,
+#offendersChart,
+#clientsChart {
+  width: 100% !important;
+  height: 320px !important;
+  display: block;
+}
+
+/* ==== Botões baseados nas cores do tema ==== */
+.btn {
+  --btn-bg: var(--primary, #1976d2);
+  --btn-fg: var(--primary-contrast, #fff);
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  border: 1px solid var(--btn-bg);
+  padding: .5rem .9rem;
+  border-radius: .5rem;
+  cursor: pointer;
+}
+.btn:hover { filter: brightness(0.95); }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+
+.btn.btn-outline {
+  background: transparent;
+  color: var(--primary, #1976d2);
+  border: 1px solid var(--primary, #1976d2);
+}
+.btn.btn-outline:hover {
+  background: color-mix(in srgb, var(--primary, #1976d2) 10%, transparent);
+}
+
+/* deixa os cards de KPI claramente clicáveis */
+.kpi-card { cursor: pointer; }

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dashboard Admin</title>
 
-  <!-- CSS (caminho relativo a partir de /frontend) -->
-  <link rel="stylesheet" href="./css/style.css?v=6" />
+  <!-- Seu CSS global (mantém animações/cores do app) -->
+  <link rel="stylesheet" href="css/app.css?v=8">
 
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -15,46 +15,19 @@
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 
-  <!-- Sua config Firebase (o mesmo arquivo que já usa no projeto) -->
+  <!-- Inicialização do Firebase (seu arquivo existente) -->
   <script src="./js/firebase-init.js"></script>
 
-  <!-- Base do backend: Render em produção / localhost em dev -->
+  <!-- Base do backend: Render em prod / localhost em dev -->
   <script>
     window.API_BASE =
       (location.hostname.includes('netlify'))
         ? 'https://rastreamento-backend-05pi.onrender.com'
         : (localStorage.getItem('API_BASE') || 'http://localhost:3000');
   </script>
-
-  <style>
-    /* Ajustes mínimos visuais se o style.css não tiver algo */
-    .page-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 14px; background: var(--card-bg, #fff); border-radius: 8px;
-      margin: 10px 10px 0; box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,.06));
-    }
-    .page-header .right {
-      display: flex; gap: 10px; align-items: center;
-    }
-    .btn { cursor: pointer; border: 0; border-radius: 6px; padding: 8px 12px; }
-    .btn-primary { background: #1677ff; color: #fff; }
-    .btn-danger { background: #d32f2f; color: #fff; }
-    .btn-outline { background: transparent; border: 1px solid #d0d7de; }
-    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
-    .kpi { padding: 14px; border-radius: 10px; background: var(--card-bg, #fff); box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,.06)); }
-    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
-    .card { background: var(--card-bg, #fff); border-radius: 10px; box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,.06)); padding: 12px; }
-    .section { margin: 14px 10px; }
-    .filters { display: grid; grid-template-columns: 220px 180px 180px 180px 180px auto auto; gap: 8px; }
-    .table { width: 100%; border-collapse: collapse; }
-    .table th, .table td { padding: 8px 10px; border-bottom: 1px solid #eaecef; text-align: left; }
-    .muted { color: #6b7280; }
-    .alias-grid { width:100%; border-collapse: collapse; }
-    .alias-grid th, .alias-grid td { border-bottom: 1px solid #eee; padding: 8px 10px; }
-  </style>
 </head>
 
-<body class="body light-mode">
+<body class="dashboard light-mode">
   <header class="page-header">
     <div class="left">
       <strong>Dashboard <span class="muted">Admin</span></strong>
@@ -69,14 +42,14 @@
 
   <main>
     <!-- Upload & Pendentes -->
-    <section class="section" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+    <section class="section row-2col">
       <div class="card">
         <h3>Upload de Planilha</h3>
-        <div style="display:flex; gap:8px; align-items:center;">
+        <div class="hstack">
           <input type="file" id="xlsxFile" />
           <button class="btn btn-primary" id="sendXlsxBtn">Enviar</button>
         </div>
-        <div style="margin-top:10px">
+        <div class="mt-10">
           <button class="btn btn-danger" id="wipeBtn">Limpar Todas as Operações</button>
         </div>
       </div>
@@ -92,13 +65,13 @@
       <h3>Gerenciador de Apelidos de Embarcadores</h3>
       <p class="muted">Vincule variações (ex.: “Ambev S.A.”) ao cliente mestre correto (ex.: “AMBEV”).</p>
 
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-        <input id="aliasDirty" class="input" placeholder="Nome 'sujo' (apelido)" style="min-width:220px;" />
-        <input id="aliasMaster" class="input" placeholder="Associado ao Mestre (ex.: AMBEV)" style="min-width:260px;" />
+      <div class="hstack wrap mb-10">
+        <input id="aliasDirty" class="input" placeholder="Nome 'sujo' (apelido)" />
+        <input id="aliasMaster" class="input" placeholder="Associado ao Mestre (ex.: AMBEV)" />
         <button id="aliasSaveBtn" class="btn btn-primary">Salvar / Atualizar</button>
       </div>
 
-      <table class="alias-grid" id="aliasTable">
+      <table class="alias-grid">
         <thead>
           <tr>
             <th>Nome "Sujo" (Apelido)</th>
@@ -112,10 +85,11 @@
       </table>
     </section>
 
-    <!-- Filtros -->
+    <!-- Filtros + KPIs + Gráficos -->
     <section class="section card">
       <h3>Filtros de Operações</h3>
-      <div class="filters" style="margin-top:8px;">
+
+      <div class="filters mt-8">
         <select id="filterCompany">
           <option value="">Todos Embarcadores</option>
         </select>
@@ -128,20 +102,20 @@
       </div>
 
       <div class="kpi-grid">
-        <div class="kpi"><div class="muted">Total de Operações</div><div id="kpiTotal" style="font-size:28px;font-weight:700;">0</div></div>
-        <div class="kpi"><div class="muted">On Time</div><div id="kpiOnTime" style="font-size:28px;font-weight:700;">0</div></div>
-        <div class="kpi"><div class="muted">Atrasadas</div><div id="kpiLate" style="font-size:28px;font-weight:700;">0</div></div>
-        <div class="kpi"><div class="muted">% de Atraso</div><div id="kpiPct" style="font-size:28px;font-weight:700;">0%</div></div>
+        <div class="kpi kpi-card" data-filter="all"><div class="muted">Total de Operações</div><div id="kpiTotal" class="kpi-val">0</div></div>
+        <div class="kpi kpi-card" data-filter="onTime"><div class="muted">On Time</div><div id="kpiOnTime" class="kpi-val">0</div></div>
+        <div class="kpi kpi-card" data-filter="late"><div class="muted">Atrasadas</div><div id="kpiLate" class="kpi-val">0</div></div>
+        <div class="kpi"><div class="muted">% de Atraso</div><div id="kpiPct" class="kpi-val">0%</div></div>
       </div>
 
       <div class="charts">
-        <div class="card">
+        <div class="card chart-card">
           <div class="muted">Top 10 Ofensores de Atraso</div>
-          <canvas id="offendersChart" height="180"></canvas>
+          <canvas id="offendersChart"></canvas>
         </div>
-        <div class="card">
+        <div class="card chart-card">
           <div class="muted">Top 10 Clientes com Atraso</div>
-          <canvas id="clientsChart" height="180"></canvas>
+          <canvas id="clientsChart"></canvas>
         </div>
       </div>
     </section>
@@ -151,9 +125,22 @@
       <h3>Lista de Operações</h3>
       <div id="opsArea" class="muted">Carregando...</div>
     </section>
+
+    <!-- Modal de KPIs -->
+    <div id="kpiModal" class="dash-modal" hidden>
+      <div class="dash-modal__backdrop" data-close></div>
+      <div class="dash-modal__dialog">
+        <div class="dash-modal__header">
+          <h4 id="kpiModalTitle">Detalhes</h4>
+          <button class="btn btn-outline" type="button" data-close>✕</button>
+        </div>
+        <div class="dash-modal__body">
+          <div id="kpiModalBody">Carregando…</div>
+        </div>
+      </div>
+    </div>
   </main>
 
-  <!-- Seu JS do dashboard (caminho relativo e sem elephant.js) -->
-  <script src="./js/dashboard.js?v=6" defer></script>
+  <script src="./js/dashboard.js?v=7" defer></script>
 </body>
 </html>

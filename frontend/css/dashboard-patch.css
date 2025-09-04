@@ -1,0 +1,81 @@
+/* ==== Dashboard patch: escopado, não interfere no restante do app ==== */
+.dashboard .kpi-card { cursor: pointer; }
+
+/* Altura fixa dos gráficos (evita “crescimento infinito”) */
+.dashboard .chart-card{ position:relative; height:320px; }
+.dashboard .chart-card canvas{
+  position:absolute; inset:12px; width:auto !important; height:auto !important;
+}
+
+/* Ponte de tema só para o dashboard (usa suas cores se já existirem) */
+.dashboard{
+  --dash-primary: var(--primary, #1677ff);
+  --dash-fg:      var(--text-color, #111);
+  --dash-bg:      var(--page-bg, #fff);
+  --dash-card:    var(--card-bg, #fff);
+  --dash-shadow:  var(--shadow, 0 1px 3px rgba(0,0,0,.06));
+  color: var(--dash-fg);
+}
+body.dark-mode.dashboard{
+  --dash-primary: var(--primary-dark, #58a6ff);
+  --dash-fg:      var(--text-color-dark, #e6e6e6);
+  --dash-bg:      var(--page-bg-dark, #0f1115);
+  --dash-card:    var(--card-bg-dark, #171a21);
+  --dash-shadow:  var(--shadow-dark, 0 2px 14px rgba(0,0,0,.5));
+}
+.dashboard .card{ background: var(--dash-card); box-shadow: var(--dash-shadow); }
+.dashboard .btn{ background: var(--dash-primary); border:1px solid var(--dash-primary); color:#fff; }
+.dashboard .btn.btn-outline{ background:transparent; color:var(--dash-primary); }
+.dashboard .btn.btn-outline:hover{ background: color-mix(in srgb, var(--dash-primary) 10%, transparent); }
+
+/* Layouts utilitários usados no dashboard */
+.dashboard .page-header{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 14px; background:var(--dash-card); border-radius:8px; margin:10px 10px 0;
+  box-shadow:var(--dash-shadow); position: sticky; top:0; z-index:10;
+}
+.dashboard .page-header .right{ display:flex; gap:10px; align-items:center; }
+.dashboard .muted{ color:#6b7280; }
+.dashboard main{ padding:10px; }
+.dashboard .section{ margin:14px 10px; }
+.dashboard .row-2col{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+@media (max-width:1000px){ .dashboard .row-2col{ grid-template-columns:1fr; } }
+.dashboard .hstack{ display:flex; gap:8px; align-items:center; }
+.dashboard .hstack.wrap{ flex-wrap:wrap; }
+.dashboard .mt-10{ margin-top:10px; }
+.dashboard .mb-10{ margin-bottom:10px; }
+.dashboard .filters{ display:grid; grid-template-columns:220px 180px 180px 180px 180px auto auto; gap:8px; }
+.dashboard .kpi-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:12px; }
+.dashboard .kpi{ padding:14px; border-radius:10px; background:var(--dash-card); box-shadow:var(--dash-shadow); }
+.dashboard .kpi .kpi-val{ font-size:28px; font-weight:700; }
+.dashboard .charts{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:14px; }
+
+/* Alias table */
+.dashboard .alias-grid{ width:100%; border-collapse:collapse; }
+.dashboard .alias-grid th,.dashboard .alias-grid td{ border-bottom:1px solid #eaecef; padding:8px 10px; text-align:left; }
+
+/* Tabela de operações (linha principal + detalhe recolhido) */
+.dashboard .table-wrapper{ overflow:auto; }
+.dashboard .operations-table{ width:100%; border-collapse:collapse; margin-top:8px; }
+.dashboard .operations-table th,.dashboard .operations-table td{ padding:8px 10px; border-bottom:1px solid #eaecef; text-align:left; }
+.dashboard .operations-table tbody tr.main-row{ cursor:pointer; }
+.dashboard .operations-table tbody tr.main-row:hover{
+  background: color-mix(in srgb, var(--dash-card) 0%, #000 6%);
+}
+.dashboard .details-row{ display:none; }
+.dashboard .details-row.visible{ display:table-row; }
+
+/* ==== Modal dos KPIs ==== */
+.dashboard .dash-modal{ position:fixed; inset:0; display:grid; place-items:center; z-index:1000; }
+.dashboard .dash-modal[hidden]{ display:none; }
+.dashboard .dash-modal__backdrop{ position:absolute; inset:0; background:rgba(0,0,0,.45); }
+.dashboard .dash-modal__dialog{
+  position:relative; width:min(1100px,95vw); max-height:85vh; overflow:auto;
+  background:var(--dash-card); color:var(--dash-fg);
+  border-radius:12px; box-shadow:var(--dash-shadow); padding:16px;
+}
+.dashboard .dash-modal__header{
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  position:sticky; top:0; background:inherit; padding-bottom:8px; margin-bottom:8px; z-index:1;
+}
+.dashboard .dash-modal__body{ overflow:auto; }

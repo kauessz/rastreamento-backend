@@ -33,21 +33,18 @@
     pendingUsers: $("#pendingUsers"),
   };
 
-  // página de lista aberta ao clicar nos KPIs (ajuste se for outra rota)
-  const LIST_PAGE_PATH = "/client-dashboard/index.html";
-
   const API = window.API_BASE || "";
   if (!API) console.warn("API_BASE não definido!");
 
   const charts = { offenders: null, clients: null };
-  const CHART_HEIGHT = 320; // altura fixa p/ evitar resize loop
+  const CHART_HEIGHT = 320; // px
+  let lastOpsItems = [];     // última lista carregada (para o modal dos KPIs)
 
   // ======== Tema ========
   function applyTheme(t) {
     document.body.classList.remove("light-mode", "dark-mode");
     document.body.classList.add(t);
-    const btn = $("#themeBtn");
-    if (btn) btn.textContent = t === "dark-mode" ? "☀️" : "🌙";
+    el.themeBtn && (el.themeBtn.textContent = t === "dark-mode" ? "☀️" : "🌙");
     localStorage.setItem("theme", t);
   }
   function toggleTheme() {
@@ -129,6 +126,7 @@
       alert("Falha no upload: " + e.message);
     }
   });
+
   el.wipeBtn?.addEventListener("click", async () => {
     if (!confirm("Tem certeza que deseja APAGAR todas as operações?")) return;
     try {
@@ -179,7 +177,6 @@
       el.aliasDirty.value = ""; el.aliasMaster.value = "";
       loadAliases();
     } catch (e) {
-      // fallback payload alternativo
       try {
         await apiPost("/api/aliases", { dirty_name: dirty, master_name: master });
         el.aliasDirty.value = ""; el.aliasMaster.value = "";
@@ -216,40 +213,30 @@
     let h = hex.replace('#','').trim();
     if (h.length === 3) h = h.split('').map(x => x+x).join('');
     const bigint = parseInt(h, 16);
-    const r = (bigint >> 16) & 255;
-    const g = (bigint >> 8) & 255;
-    const b = bigint & 255;
+    const r = (bigint >> 16) & 255, g = (bigint >> 8) & 255, b = bigint & 255;
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
   function prepCanvas(canvas) {
     if (!canvas) return;
     const p = canvas.parentElement;
-    if (p) {
-      p.style.position = "relative";
-      p.style.height = CHART_HEIGHT + "px";  // altura fixa do container
-    }
+    if (p) { p.style.position = "relative"; p.style.height = CHART_HEIGHT + "px"; }
     canvas.style.width = "100%";
-    canvas.style.height = CHART_HEIGHT + "px"; // altura fixa do canvas
-    // remove atributos height/width nativos que podem interferir
+    canvas.style.height = CHART_HEIGHT + "px";
     canvas.removeAttribute("height");
     canvas.removeAttribute("width");
   }
   function makeHorizontalBar(ctx, labels, values, label) {
-    const primary = cssVar('--primary', '#1976d2');
+    const primary = cssVar('--dash-primary', '#1677ff');
     const bg = hexToRgba(primary, 0.35);
     const border = hexToRgba(primary, 1);
-
     return new Chart(ctx, {
       type: "bar",
       data: { labels, datasets: [{ label, data: values, backgroundColor: bg, borderColor: border, borderWidth: 1 }] },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        indexAxis: "y", // eixo X = valores
-        scales: {
-          x: { beginAtZero: true, ticks: { precision: 0 } },
-          y: { ticks: { autoSkip: false } }
-        },
+        indexAxis: "y",
+        scales: { x: { beginAtZero: true, ticks: { precision: 0 } }, y: { ticks: { autoSkip: false } } },
         plugins: { legend: { display: true } }
       }
     });
@@ -260,34 +247,35 @@
     const f = readFilters();
     try {
       const k = await apiGet("/api/dashboard/kpis", f);
-      el.kpiTotal.textContent = k.total || 0;
-      el.kpiOnTime.textContent = k.onTime || 0;
-      el.kpiLate.textContent = k.late || 0;
-      el.kpiPct.textContent = (k.latePct ?? 0) + "%";
 
-      // preparar canvases com altura fixa
+      const total  = Number(k.total || 0);
+      const late   = Number(k.late  || 0);
+      const onTime = Number(k.onTime || 0);
+      const pct = total ? Math.round((late / total) * 10000) / 100 : 0;
+
+      el.kpiTotal.textContent = total;
+      el.kpiOnTime.textContent = onTime;
+      el.kpiLate.textContent = late;
+      el.kpiPct.textContent = pct.toFixed(2).replace('.', ',') + "%";
+
       prepCanvas(el.offendersChart);
       prepCanvas(el.clientsChart);
-
-      charts.offenders?.destroy();
-      charts.clients?.destroy();
+      charts.offenders?.destroy(); charts.clients?.destroy();
 
       const offenders = k.topOffenders || [];
       const clients   = k.topClients   || [];
 
       if (el.offendersChart) {
-        const ctx1 = el.offendersChart.getContext("2d");
         charts.offenders = makeHorizontalBar(
-          ctx1,
+          el.offendersChart.getContext("2d"),
           offenders.map(x => x.reason),
           offenders.map(x => x.count),
           "Ocorrências"
         );
       }
       if (el.clientsChart) {
-        const ctx2 = el.clientsChart.getContext("2d");
         charts.clients = makeHorizontalBar(
-          ctx2,
+          el.clientsChart.getContext("2d"),
           clients.map(x => x.client),
           clients.map(x => x.count),
           "Atrasos"
@@ -303,29 +291,40 @@
   }
 
   function opRow(o) {
-    return `<tr>
-      <td>${o.booking || "-"}</td>
-      <td>${o.container || "-"}</td>
-      <td>${o.client || "-"}</td>
-      <td>${o.port || "-"}</td>
-      <td>${o.sla_previsao || "-"}</td>
-      <td>${o.exec_inicio || "-"}</td>
-      <td>${o.exec_fim || "-"}</td>
-      <td>${o.atraso_hhmm || "-"}</td>
-      <td>${o.motivo || "-"}</td>
-    </tr>
-    <tr>
-      <td colspan="9" class="muted">
-        <b>Tipo de Operação:</b> ${o.tipo_operacao || "N/A"} —
-        <b>Transportadora:</b> ${o.transportadora || "N/A"} —
-        <b>Nº Programação:</b> ${o.num_programacao || "N/A"} —
-        <b>Motorista:</b> ${o.motorista || "N/A"} —
-        <b>CPF:</b> ${o.cpf || "N/A"} —
-        <b>Placa Veículo:</b> ${o.placa_veiculo || "N/A"} —
-        <b>Placa Carreta:</b> ${o.placa_carreta || "N/A"} —
-        <b>Nº Cliente:</b> ${o.numero_cliente || "N/A"}
-      </td>
-    </tr>`;
+    return `
+      <tr class="main-row">
+        <td>${o.booking || "-"}</td>
+        <td>${o.container || "-"}</td>
+        <td>${o.client || "-"}</td>
+        <td>${o.port || "-"}</td>
+        <td>${o.sla_previsao || "-"}</td>
+        <td>${o.exec_inicio || "-"}</td>
+        <td>${o.exec_fim || "-"}</td>
+        <td>${o.atraso_hhmm || "-"}</td>
+        <td>${o.motivo || "-"}</td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="9" class="muted">
+          <b>Tipo de Operação:</b> ${o.tipo_operacao || "N/A"} —
+          <b>Transportadora:</b> ${o.transportadora || "N/A"} —
+          <b>Nº Programação:</b> ${o.num_programacao || "N/A"} —
+          <b>Motorista:</b> ${o.motorista || "N/A"} —
+          <b>CPF:</b> ${o.cpf || "N/A"} —
+          <b>Placa Veículo:</b> ${o.placa_veiculo || "N/A"} —
+          <b>Placa Carreta:</b> ${o.placa_carreta || "N/A"} —
+          <b>Nº Cliente:</b> ${o.numero_cliente || "N/A"}
+        </td>
+      </tr>`;
+  }
+
+  function setupOpToggles() {
+    const rows = document.querySelectorAll("#opsArea table tbody tr.main-row");
+    rows.forEach((tr) => {
+      tr.addEventListener("click", () => {
+        const det = tr.nextElementSibling;
+        if (det && det.classList.contains("details-row")) det.classList.toggle("visible");
+      });
+    });
   }
 
   async function loadOperations() {
@@ -333,13 +332,15 @@
     try {
       const data = await apiGet("/api/dashboard/operations", f);
       const items = Array.isArray(data?.items) ? data.items : [];
+      lastOpsItems = items; // guarda para o modal dos KPIs
+
       if (items.length === 0) {
         el.opsArea.innerHTML = `<div class="muted">Nenhuma operação encontrada.</div>`;
         return;
       }
       el.opsArea.innerHTML = `
-        <div style="overflow:auto">
-          <table class="table">
+        <div class="table-wrapper">
+          <table class="operations-table">
             <thead>
               <tr>
                 <th>Booking</th><th>Contêiner</th><th>Embarcador</th><th>Porto</th>
@@ -350,6 +351,7 @@
             <tbody>${items.map(opRow).join("")}</tbody>
           </table>
         </div>`;
+      setupOpToggles();
     } catch (e) {
       console.error(e);
       el.opsArea.innerHTML = `<div class="muted">Falha ao carregar operações.</div>`;
@@ -363,24 +365,59 @@
     } catch { el.pendingUsers.textContent = "—"; }
   }
 
-  // ======== KPIs clicáveis → navegação ========
-  function navigateToList(status) {
-    const f = readFilters();
-    const qs = new URLSearchParams();
-    if (status && status !== "all") qs.set("status", status); // onTime | late
-    if (f.booking) qs.set("booking", f.booking);
-    if (f.container) qs.set("container", f.container);
-    if (f.companyId) qs.set("companyId", f.companyId);
-    if (f.start) qs.set("start", f.start);
-    if (f.end) qs.set("end", f.end);
-    window.location.href = `${LIST_PAGE_PATH}?${qs.toString()}`;
+  // ======== Modal dos KPIs ========
+  function minutesFromHHMM(hhmm){
+    const [h='0', m='0'] = String(hhmm||'00:00').split(':');
+    return (parseInt(h)||0)*60 + (parseInt(m)||0);
   }
-  el.kpiTotal?.addEventListener("click", () => navigateToList("all"));
-  el.kpiOnTime?.addEventListener("click", () => navigateToList("onTime"));
-  el.kpiLate?.addEventListener("click", () => navigateToList("late"));
-  document.querySelectorAll(".kpi-card[data-filter]").forEach(card => {
-    card.addEventListener("click", () => navigateToList(card.dataset.filter));
+  function isLateOp(op){ return minutesFromHHMM(op.atraso_hhmm) > 0; }
+  function filterByStatus(items, status){
+    if (status === 'late')   return items.filter(isLateOp);
+    if (status === 'onTime') return items.filter(o => !isLateOp(o));
+    return items; // 'all'
+  }
+  function renderOpsTable(items){
+    return `<div class="table-wrapper">
+      <table class="operations-table">
+        <thead>
+          <tr>
+            <th>Booking</th><th>Contêiner</th><th>Embarcador</th><th>Porto</th>
+            <th>Previsão Atendimento</th><th>Início Execução</th><th>Fim Execução</th>
+            <th>Atraso (HH:MM)</th><th>Motivo do Atraso</th>
+          </tr>
+        </thead>
+        <tbody>${items.map(opRow).join('')}</tbody>
+      </table>
+    </div>`;
+  }
+  function openKpiModal(status){
+    const modal = document.getElementById('kpiModal');
+    const title = document.getElementById('kpiModalTitle');
+    const body  = document.getElementById('kpiModalBody');
+
+    const items = filterByStatus(lastOpsItems, status);
+    title.textContent =
+      status === 'late'   ? `Operações atrasadas (${items.length})` :
+      status === 'onTime' ? `Operações on time (${items.length})` :
+                            `Todas as operações (${items.length})`;
+
+    body.innerHTML = renderOpsTable(items);
+    modal.hidden = false;
+
+    // habilita expand/collapse dentro do modal também
+    setupOpToggles();
+
+    modal.querySelectorAll('[data-close]').forEach(btn => btn.onclick = () => (modal.hidden = true));
+    modal.onkeydown = (e) => { if (e.key === 'Escape') modal.hidden = true; };
+  }
+
+  // KPIs clicáveis → abre o modal com a lista filtrada
+  document.querySelectorAll(".kpi-card").forEach(card => {
+    card.addEventListener("click", () => openKpiModal(card.dataset.filter || 'all'));
   });
+  el.kpiTotal?.addEventListener("click", ()=> openKpiModal('all'));
+  el.kpiOnTime?.addEventListener("click", ()=> openKpiModal('onTime'));
+  el.kpiLate?.addEventListener("click", ()=> openKpiModal('late'));
 
   // ======== Filtros ========
   el.applyBtn?.addEventListener("click", () => loadAll());
@@ -395,12 +432,7 @@
 
   // ======== Boot ========
   async function loadAll() {
-    await Promise.all([
-      loadKpisAndCharts(),
-      loadOperations(),
-      loadAliases(),
-      loadPendingUsers(),
-    ]);
+    await Promise.all([ loadKpisAndCharts(), loadOperations(), loadAliases(), loadPendingUsers() ]);
   }
   (async function boot() {
     try {

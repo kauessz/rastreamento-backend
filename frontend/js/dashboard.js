@@ -1,5 +1,3 @@
-
-
 (() => {
   // ======== Helpers básicos ========
   const $ = (sel) => document.querySelector(sel);
@@ -34,6 +32,9 @@
     opsArea: $("#opsArea"),
     pendingUsers: $("#pendingUsers"),
   };
+
+  // página de lista que deve abrir ao clicar nos KPIs (ajuste se for outra)
+  const LIST_PAGE_PATH = "/client-dashboard/index.html";
 
   let charts = {
     offenders: null,
@@ -154,14 +155,18 @@
         tbody.innerHTML = `<tr><td colspan="3" class="muted">Nenhum apelido cadastrado.</td></tr>`;
         return;
       }
+      // suporta {alias, master} ou {dirty_name, master_name}
       tbody.innerHTML = data
-        .map(
-          (a) => `<tr>
-            <td>${a.dirty_name || "-"}</td>
-            <td>${a.master_name || "-"}</td>
-            <td><button class="btn btn-outline" data-del="${a.id}">Excluir</button></td>
-          </tr>`
-        )
+        .map((a) => {
+          const alias  = a.alias || a.dirty_name || a.dirty || "-";
+          const master = a.master || a.master_name || a.nome_mestre || "-";
+          const id     = a.id;
+          return `<tr>
+            <td>${alias}</td>
+            <td>${master}</td>
+            <td><button class="btn btn-outline" data-del="${id}">Excluir</button></td>
+          </tr>`;
+        })
         .join("");
 
       tbody.querySelectorAll("[data-del]").forEach((btn) =>
@@ -185,12 +190,21 @@
     const master = el.aliasMaster.value.trim();
     if (!dirty || !master) return alert("Preencha os dois campos.");
     try {
-      await apiPost("/api/aliases", { dirty_name: dirty, master_name: master });
+      // aceita ambos os formatos no backend
+      await apiPost("/api/aliases", { alias: dirty, master });
       el.aliasDirty.value = "";
       el.aliasMaster.value = "";
       loadAliases();
     } catch (e) {
-      alert("Erro ao salvar: " + e.message);
+      // fallback para a outra forma de payload
+      try {
+        await apiPost("/api/aliases", { dirty_name: dirty, master_name: master });
+        el.aliasDirty.value = "";
+        el.aliasMaster.value = "";
+        loadAliases();
+      } catch (err) {
+        alert("Erro ao salvar: " + err.message);
+      }
     }
   });
 
@@ -208,11 +222,29 @@
   async function loadCompaniesIntoFilter() {
     try {
       const list = await apiGet("/api/dashboard/companies");
-      el.filterCompany.innerHTML = `<option value="">Todos Embarcadores</option>` + 
+      el.filterCompany.innerHTML = `<option value="">Todos Embarcadores</option>` +
         (list || []).map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
     } catch (e) {
       console.warn("companies:", e.message);
     }
+  }
+
+  // helper para construir gráficos horizontais
+  function makeHorizontalBar(ctx, labels, values, label) {
+    return new Chart(ctx, {
+      type: "bar",
+      data: { labels, datasets: [{ label, data: values, borderWidth: 1 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis: "y",                    // <<< eixo X = valores
+        scales: {
+          x: { beginAtZero: true, ticks: { precision: 0 } },
+          y: { ticks: { autoSkip: false } }
+        },
+        plugins: { legend: { display: true } }
+      }
+    });
   }
 
   async function loadKpisAndCharts() {
@@ -224,29 +256,28 @@
       el.kpiLate.textContent = k.late || 0;
       el.kpiPct.textContent = (k.latePct ?? 0) + "%";
 
-      // charts (offenders / clients)
+      // charts (offenders / clients) — HORIZONTAIS
       const ctx1 = el.offendersChart.getContext("2d");
       const ctx2 = el.clientsChart.getContext("2d");
       charts.offenders?.destroy();
       charts.clients?.destroy();
 
-      charts.offenders = new Chart(ctx1, {
-        type: "bar",
-        data: {
-          labels: (k.topOffenders || []).map((x) => x.reason),
-          datasets: [{ label: "Ocorrências", data: (k.topOffenders || []).map((x) => x.count) }]
-        },
-        options: { responsive: true, scales: { x: { ticks: { maxRotation: 0 }}}}
-      });
+      const offenders = k.topOffenders || [];
+      const clients   = k.topClients   || [];
 
-      charts.clients = new Chart(ctx2, {
-        type: "bar",
-        data: {
-          labels: (k.topClients || []).map((x) => x.client),
-          datasets: [{ label: "Atrasos", data: (k.topClients || []).map((x) => x.count) }]
-        },
-        options: { responsive: true, scales: { x: { ticks: { maxRotation: 0 }}}}
-      });
+      charts.offenders = makeHorizontalBar(
+        ctx1,
+        offenders.map(x => x.reason),
+        offenders.map(x => x.count),
+        "Ocorrências"
+      );
+
+      charts.clients = makeHorizontalBar(
+        ctx2,
+        clients.map(x => x.client),
+        clients.map(x => x.count),
+        "Atrasos"
+      );
     } catch (e) {
       console.error(e);
       el.kpiTotal.textContent = "0";
@@ -319,6 +350,27 @@
       el.pendingUsers.textContent = "—";
     }
   }
+
+  // ======== KPIs clicáveis: navega para a lista filtrada ========
+  function navigateToList(status) {
+    const f = readFilters();
+    const qs = new URLSearchParams();
+    if (status) qs.set("status", status);               // onTime | late | all
+    if (f.booking) qs.set("booking", f.booking);
+    if (f.container) qs.set("container", f.container);
+    if (f.companyId) qs.set("companyId", f.companyId);
+    if (f.start) qs.set("start", f.start);
+    if (f.end) qs.set("end", f.end);
+    window.location.href = `${LIST_PAGE_PATH}?${qs.toString()}`;
+  }
+  // Se os KPIs forem spans dentro de cards, capturamos o click no próprio span:
+  el.kpiTotal?.addEventListener("click", () => navigateToList("all"));
+  el.kpiOnTime?.addEventListener("click", () => navigateToList("onTime"));
+  el.kpiLate?.addEventListener("click", () => navigateToList("late"));
+  // Se houver elementos com data-filter (compatibilidade):
+  document.querySelectorAll(".kpi-card[data-filter]").forEach(card => {
+    card.addEventListener("click", () => navigateToList(card.dataset.filter));
+  });
 
   // ======== Eventos dos filtros ========
   el.applyBtn.addEventListener("click", () => loadAll());

@@ -52,7 +52,7 @@ const app = express();
 
 /* ============================ Middlewares base ============================ */
 /** Importante: evita o erro do express-rate-limit e não deixa trust proxy “permissivo” */
-app.set('trust proxy', 'loopback'); // (era true)
+app.set('trust proxy', 'loopback'); // em vez de true
 
 /** CORS: permite origens definidas em env; se vazio, permite todas */
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
@@ -69,8 +69,8 @@ app.use(cors({
   credentials: true
 }));
 
-/** Preflight amplo para evitar 204/erro em OPTIONS */
-app.options('*', cors());
+/** Preflight amplo (Express 5: use '(.*)' ou regex, nunca '*') */
+app.options('(.*)', cors());
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
@@ -84,7 +84,7 @@ const limiter = rateLimit({
   max: 1200,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { trustProxy: false }, // chave para não estourar com trust proxy
+  validate: { trustProxy: false }
 });
 app.use('/api/', limiter);
 
@@ -107,7 +107,7 @@ tryMount('/api/reports',    './api/reportsRoutes');
 tryMount('/api/aliases',    './api/aliasesRoutes');
 tryMount('/api/analytics',  './api/analyticsRoutes');
 tryMount('/api/emails',     './api/emailsRoutes');
-tryMount('/api/users',      './api/userRoutes');    // agora calcula admin com ENV
+tryMount('/api/users',      './api/userRoutes');
 tryMount('/api/clients',    './api/clientRoutes');
 tryMount('/api/embarcador', './api/embarcadorRoutes');
 

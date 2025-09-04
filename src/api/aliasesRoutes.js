@@ -1,12 +1,12 @@
 // src/api/aliasesRoutes.js
 const express = require('express');
 const router = express.Router();
-const { listAliases, upsertAlias, ensureTables } = require('../controllers/aliasesController');
+const { listAliases, upsertAlias, deleteAlias, ensureTables } = require('../controllers/aliasesController');
 
 ensureTables().catch(console.error);
 
 // GET /api/aliases
-router.get('/', async (req,res) => {
+router.get('/', async (_req,res) => {
   try {
     const rows = await listAliases();
     res.json(rows);
@@ -26,6 +26,17 @@ router.post('/', async (req,res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Falha ao salvar alias' });
+  }
+});
+
+// DELETE /api/aliases/:id
+router.delete('/:id', async (req,res) => {
+  try {
+    await deleteAlias(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Falha ao excluir alias' });
   }
 });
 

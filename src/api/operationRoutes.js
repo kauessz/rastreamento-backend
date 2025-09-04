@@ -14,7 +14,7 @@ router.get('/', authMiddleware, isAdmin, operationController.getOperations);
 router.post('/upload', authMiddleware, isAdmin, upload.single('file'), operationController.uploadOperations);
 router.delete('/all', authMiddleware, isAdmin, operationController.deleteAllOperations);
 
-// Aliases usados pelo front
+// Aliases compatíveis com o front
 router.post('/upload-xlsx', authMiddleware, isAdmin, upload.single('file'), operationController.uploadOperations);
 router.post('/wipe', authMiddleware, isAdmin, operationController.deleteAllOperations);
 

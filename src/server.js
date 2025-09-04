@@ -1,3 +1,4 @@
+// src/server.js
 require('dotenv').config();
 
 const express     = require('express');
@@ -50,8 +51,10 @@ const app = express();
 })();
 
 /* ============================ Middlewares base ============================ */
-app.set('trust proxy', true);
+/** Importante: evita o erro do express-rate-limit e não deixa trust proxy “permissivo” */
+app.set('trust proxy', 'loopback'); // (era true)
 
+/** CORS: permite origens definidas em env; se vazio, permite todas */
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
   .map(s => s.trim())
@@ -59,12 +62,15 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true);
+    if (!origin) return cb(null, true); // browsers que não enviam origin
     if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return cb(null, true);
     return cb(new Error(`CORS bloqueado: ${origin}`));
   },
   credentials: true
 }));
+
+/** Preflight amplo para evitar 204/erro em OPTIONS */
+app.options('*', cors());
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
@@ -72,7 +78,14 @@ app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-const limiter = rateLimit({ windowMs: 60 * 1000, max: 1200 });
+/** Rate limit “hardened” (evita o ValidationError do pacote) */
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 1200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false }, // chave para não estourar com trust proxy
+});
 app.use('/api/', limiter);
 
 /* ======================== Montagem tolerante de rotas ===================== */
